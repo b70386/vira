@@ -11,9 +11,10 @@ interface AnalysisResultProps {
   durationMinutes: number;
   waypoints?: { lat: number; lng: number; name: string; label: string }[];
   pois?: POI[];
+  conditionAnalysis?: any;
 }
 
-export default function AnalysisResult({ result, routeAnalysis, vehicle, distanceKm, durationMinutes, waypoints, pois = [] }: AnalysisResultProps) {
+export default function AnalysisResult({ result, routeAnalysis, vehicle, distanceKm, durationMinutes, waypoints, pois = [], conditionAnalysis }: AnalysisResultProps) {
   if (!result || !routeAnalysis || !vehicle) return null;
 
   const getVerdictStyle = (verdict: string) => {
@@ -273,6 +274,65 @@ export default function AnalysisResult({ result, routeAnalysis, vehicle, distanc
             ))}
           </ul>
         </div>
+
+        {/* Kondisi Khusus Kendaraan */}
+        {conditionAnalysis && conditionAnalysis.scorePenalty > 0 && (
+          <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+            <h3 className="font-semibold text-purple-700 dark:text-purple-400 mb-3 flex items-center gap-1">
+              🔧 Analisis Kondisi Khusus Kendaraan
+            </h3>
+            <div className="bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-lg p-3 mb-3">
+              <p className="text-sm text-purple-800 dark:text-purple-200">
+                <span className="font-semibold">Penalty Skor:</span> -{conditionAnalysis.scorePenalty} poin
+              </p>
+              <p className="text-xs text-purple-600 dark:text-purple-300 mt-1">
+                Kondisi khusus yang Anda sebutkan mempengaruhi kelayakan kendaraan
+              </p>
+            </div>
+
+            {conditionAnalysis.criticals.length > 0 && (
+              <div className="mb-3">
+                <h4 className="text-sm font-semibold text-red-700 dark:text-red-400 mb-2">❌ Masalah Kritis:</h4>
+                <ul className="space-y-1">
+                  {conditionAnalysis.criticals.map((item: string, i: number) => (
+                    <li key={i} className="text-sm text-gray-600 dark:text-gray-300 flex items-start gap-2">
+                      <span className="text-red-500 mt-0.5">•</span>
+                      {item}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {conditionAnalysis.warnings.length > 0 && (
+              <div className="mb-3">
+                <h4 className="text-sm font-semibold text-yellow-700 dark:text-yellow-400 mb-2">⚠️ Perhatian:</h4>
+                <ul className="space-y-1">
+                  {conditionAnalysis.warnings.map((item: string, i: number) => (
+                    <li key={i} className="text-sm text-gray-600 dark:text-gray-300 flex items-start gap-2">
+                      <span className="text-yellow-500 mt-0.5">•</span>
+                      {item}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {conditionAnalysis.recommendations.length > 0 && (
+              <div>
+                <h4 className="text-sm font-semibold text-blue-700 dark:text-blue-400 mb-2">💡 Rekomendasi Perbaikan:</h4>
+                <ul className="space-y-1">
+                  {conditionAnalysis.recommendations.map((item: string, i: number) => (
+                    <li key={i} className="text-sm text-gray-600 dark:text-gray-300 flex items-start gap-2">
+                      <span className="text-blue-500 mt-0.5">→</span>
+                      {item}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

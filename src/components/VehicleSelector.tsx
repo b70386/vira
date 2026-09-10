@@ -4,9 +4,11 @@ import { vehicles, Vehicle } from '../data/vehicles';
 interface VehicleSelectorProps {
   selectedVehicle: Vehicle | null;
   onSelect: (vehicle: Vehicle) => void;
+  specialConditions: string;
+  onSpecialConditionsChange: (value: string) => void;
 }
 
-export default function VehicleSelector({ selectedVehicle, onSelect }: VehicleSelectorProps) {
+export default function VehicleSelector({ selectedVehicle, onSelect, specialConditions, onSpecialConditionsChange }: VehicleSelectorProps) {
   const [filterMerk, setFilterMerk] = useState<string>('all');
   const [filterBBM, setFilterBBM] = useState<string>('all');
   const [filterCategory, setFilterCategory] = useState<string>('all');
@@ -223,6 +225,23 @@ export default function VehicleSelector({ selectedVehicle, onSelect }: VehicleSe
           )}
         </div>
       )}
+
+      {/* Kondisi Khusus Kendaraan */}
+      <div className="mt-4">
+        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+          🔧 Kondisi Khusus Kendaraan <span className="text-xs text-gray-500">(opsional)</span>
+        </label>
+        <textarea
+          value={specialConditions}
+          onChange={(e) => onSpecialConditionsChange(e.target.value)}
+          placeholder="Contoh: kampas rem sudah tipis, stir agak oleng ke kanan, AC tidak dingin, ban sudah 3 tahun belum diganti, dll."
+          className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-800 dark:text-white placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+          rows={3}
+        />
+        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+          💡 Kondisi ini akan dianalisis dan mempengaruhi skor kelayakan
+        </p>
+      </div>
     </div>
   );
 }

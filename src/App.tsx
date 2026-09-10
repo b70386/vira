@@ -7,6 +7,7 @@ import ElevationChart from './components/ElevationChart';
 import { Vehicle } from './data/vehicles';
 import { getRoute, getElevationData, analyzeRoute, queryPOIsAlongRoute } from './utils/routing';
 import { analyzeFeasibility } from './utils/analysis';
+import { analyzeSpecialConditions } from './utils/conditionAnalysis';
 import { RouteAnalysis, FeasibilityResult, ElevationData, Waypoint, POI } from './types';
 
 function App() {
@@ -16,6 +17,9 @@ function App() {
   // State untuk kendaraan
   const [selectedVehicle, setSelectedVehicle] = useState<Vehicle | null>(null);
   
+  // State untuk kondisi khusus kendaraan (input manual user)
+  const [specialConditions, setSpecialConditions] = useState<string>('');
+  
   // State untuk data rute
   const [routeCoordinates, setRouteCoordinates] = useState<[number, number][]>([]);
   const [elevationData, setElevationData] = useState<ElevationData[]>([]);
@@ -24,6 +28,7 @@ function App() {
   const [distanceKm, setDistanceKm] = useState(0);
   const [durationMinutes, setDurationMinutes] = useState(0);
   const [pois, setPois] = useState<POI[]>([]);
+  const [conditionAnalysis, setConditionAnalysis] = useState<any>(null);
   
   // State untuk loading dan error
   const [isLoading, setIsLoading] = useState(false);
@@ -122,7 +127,29 @@ function App() {
       // Step 6: Analisis kelayakan (dengan data POI)
       setLoadingStep('Mengevaluasi kelayakan kendaraan...');
       const feasibility = analyzeFeasibility(selectedVehicle, analysis, scaledPois);
+      
+      // Step 7: Analisis kondisi khusus kendaraan (input manual user)
+      const conditionResult = analyzeSpecialConditions(specialConditions);
+      
+      // Gabungkan hasil analisis kondisi khusus ke feasibility
+      if (conditionResult.scorePenalty > 0) {
+        feasibility.score = Math.max(1, feasibility.score - conditionResult.scorePenalty);
+        feasibility.warnings = [...feasibility.warnings, ...conditionResult.warnings];
+        feasibility.criticals = [...feasibility.criticals, ...conditionResult.criticals];
+        feasibility.recommendations = [...feasibility.recommendations, ...conditionResult.recommendations];
+        
+        // Update verdict berdasarkan score baru
+        if (feasibility.score >= 8) {
+          feasibility.verdict = "COCOK";
+        } else if (feasibility.score >= 5) {
+          feasibility.verdict = "PERHATIAN";
+        } else {
+          feasibility.verdict = "TIDAK COCOK";
+        }
+      }
+      
       setFeasibilityResult(feasibility);
+      setConditionAnalysis(conditionResult);
 
       setLoadingStep('Selesai!');
     } catch (err) {
@@ -132,7 +159,7 @@ function App() {
       setIsLoading(false);
       setLoadingStep('');
     }
-  }, [waypoints, selectedVehicle]);
+  }, [waypoints, selectedVehicle, specialConditions]);
 
   // Validasi: minimal 2 waypoint terisi
   const validWaypoints = waypoints.filter(w => w !== null);
@@ -210,6 +237,8 @@ function App() {
             <VehicleSelector
               selectedVehicle={selectedVehicle}
               onSelect={setSelectedVehicle}
+              specialConditions={specialConditions}
+              onSpecialConditionsChange={setSpecialConditions}
             />
           </div>
 
@@ -240,6 +269,7 @@ function App() {
                 durationMinutes={durationMinutes}
                 waypoints={waypoints.filter((w): w is Waypoint => w !== null)}
                 pois={pois}
+                conditionAnalysis={conditionAnalysis}
               />
             )}
 
