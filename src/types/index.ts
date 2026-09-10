@@ -58,3 +58,15 @@ export interface SearchResult {
   lon: string;
   type: string;
 }
+
+export type POIType = 'spbu' | 'indomaret' | 'alfamart' | 'minimarket' | 'other';
+
+export interface POI {
+  lat: number;
+  lng: number;
+  name: string;
+  type: POIType;
+  brand: string;
+  distance_from_route_m: number; // jarak dari rute dalam meter
+  distance_from_start_km: number; // rasio 0-1, akan di-scale ke km
+}

@@ -1,5 +1,5 @@
-// Utility untuk pengambilan data rute dan elevasi
-import { RouteData, RouteAnalysis, ElevationData } from '../types';
+// Utility untuk pengambilan data rute, elevasi, dan POI
+import { RouteData, RouteAnalysis, ElevationData, POI, POIType } from '../types';
 
 // Cache untuk data elevasi
 const elevationCache = new Map<string, number>();
@@ -31,7 +31,6 @@ export async function searchLocation(query: string): Promise<Array<{
  * Mendukung multi-waypoint (hingga 4 titik)
  */
 export async function getRoute(waypoints: {lat: number; lng: number}[]): Promise<RouteData> {
-  // Format: lon1,lat1;lon2,lat2;lon3,lat3;lon4,lat4
   const coordsStr = waypoints.map(w => `${w.lng},${w.lat}`).join(';');
   const url = `https://router.project-osrm.org/route/v1/driving/${coordsStr}?overview=full&geometries=geojson&steps=true`;
   
@@ -51,7 +50,7 @@ export async function getRoute(waypoints: {lat: number; lng: number}[]): Promise
   const points = coordinates.map((coord: [number, number], index: number) => ({
     lat: coord[1],
     lng: coord[0],
-    distance: 0 // akan dihitung nanti
+    distance: 0
   }));
   
   // Hitung jarak kumulatif
@@ -72,15 +71,16 @@ export async function getRoute(waypoints: {lat: number; lng: number}[]): Promise
 
 /**
  * Mendapatkan data elevasi untuk titik-titik sepanjang rute
- * Menggunakan Open-Elevation API
+ * Menggunakan Open-Elevation API dengan sampling lebih rapat untuk akurasi tanjakan
  */
 export async function getElevationData(points: {lat: number; lng: number; distance?: number}[]): Promise<ElevationData[]> {
-  // Sample points untuk mengurangi jumlah request (max 100 titik)
-  const sampleRate = Math.max(1, Math.floor(points.length / 80));
+  // Sampling lebih rapat: setiap ~150m (bukan 500m) untuk akurasi tanjakan pendek
+  // Tapi batasi max 120 titik agar tidak overload API
+  const sampleRate = Math.max(1, Math.floor(points.length / 120));
   const sampledPoints = points.filter((_, i) => i % sampleRate === 0 || i === points.length - 1);
   
   // Cek cache dulu
-  const uncachedPoints: {lat: number; lng: number; index: number}[] = [];
+  const uncachedPoints: {lat: number; lng: number; distance?: number; index: number}[] = [];
   const results: (ElevationData | null)[] = new Array(sampledPoints.length).fill(null);
   
   sampledPoints.forEach((point, index) => {
@@ -98,8 +98,7 @@ export async function getElevationData(points: {lat: number; lng: number; distan
   
   // Request elevasi untuk titik yang belum ada di cache
   if (uncachedPoints.length > 0) {
-    // Batch request (max 100 per request)
-    const batchSize = 50;
+    const batchSize = 40;
     for (let i = 0; i < uncachedPoints.length; i += batchSize) {
       const batch = uncachedPoints.slice(i, i + batchSize);
       const locations = batch.map(p => ({ latitude: p.lat, longitude: p.lng }));
@@ -124,7 +123,6 @@ export async function getElevationData(points: {lat: number; lng: number; distan
           });
         }
       } catch (error) {
-        // Fallback: estimasi elevasi berdasarkan koordinat (sangat kasar)
         console.warn('Open-Elevation API gagal, menggunakan estimasi');
         uncachedPoints.forEach((p) => {
           const estimatedElevation = estimateElevation(p.lat, p.lng);
@@ -140,26 +138,59 @@ export async function getElevationData(points: {lat: number; lng: number; distan
     }
   }
   
-  // Hitung jarak dan gradient
+  // Hitung jarak dan gradient dengan smoothing
   const elevationProfile: ElevationData[] = [];
   let prevElevation = 0;
   let prevDistance = 0;
   
+  // Kumpulkan elevasi mentah dulu
+  const rawElevations: { distance_km: number; elevation_m: number }[] = [];
   for (let i = 0; i < sampledPoints.length; i++) {
     const elevation = results[i]?.elevation_m ?? 0;
     const distance = sampledPoints[i].distance 
       ? sampledPoints[i].distance! / 1000 
       : calculateCumulativeDistance(sampledPoints, i);
+    rawElevations.push({ distance_km: distance, elevation_m: elevation });
+  }
+  
+  // Smoothing: gunakan moving average window 3 titik untuk mengurangi noise
+  const smoothedElevations = rawElevations.map((point, i) => {
+    if (i === 0 || i === rawElevations.length - 1) return point.elevation_m;
+    const prev = rawElevations[i - 1].elevation_m;
+    const next = rawElevations[i + 1].elevation_m;
+    return (prev + point.elevation_m + next) / 3;
+  });
+  
+  // Hitung gradient dengan window yang lebih besar (5 titik) untuk akurasi
+  for (let i = 0; i < rawElevations.length; i++) {
+    const elevation = smoothedElevations[i];
+    const distance = rawElevations[i].distance_km;
     
-    const horizontalDist = distance - prevDistance;
-    const gradient = horizontalDist > 0 
-      ? ((elevation - prevElevation) / (horizontalDist * 1000)) * 100 
-      : 0;
+    // Hitung gradient menggunakan window 5 titik ke depan (jika tersedia)
+    let gradient = 0;
+    const windowSize = Math.min(5, rawElevations.length - 1 - i);
+    if (windowSize > 0) {
+      const futureElevation = smoothedElevations[i + windowSize];
+      const futureDistance = rawElevations[i + windowSize].distance_km;
+      const horizontalDist = futureDistance - distance;
+      if (horizontalDist > 0) {
+        gradient = ((futureElevation - elevation) / (horizontalDist * 1000)) * 100;
+      }
+    } else if (i > 0) {
+      // Fallback: gunakan jarak dari titik sebelumnya
+      const horizontalDist = distance - prevDistance;
+      if (horizontalDist > 0) {
+        gradient = ((elevation - prevElevation) / (horizontalDist * 1000)) * 100;
+      }
+    }
+    
+    // Filter outlier: gradient tidak mungkin > 30% untuk jalan umum di Indonesia
+    const clampedGradient = Math.abs(gradient) > 30 ? 0 : gradient;
     
     elevationProfile.push({
       distance_km: distance,
       elevation_m: elevation,
-      gradient: Math.abs(gradient) < 50 ? gradient : 0 // filter outlier
+      gradient: clampedGradient
     });
     
     prevElevation = elevation;
@@ -170,36 +201,32 @@ export async function getElevationData(points: {lat: number; lng: number; distan
 }
 
 /**
- * Estimasi elevasi berdasarkan koordinat (fallback)
- * Menggunakan pengetahuan umum tentang topografi Indonesia
+ * Estimasi elevasi berdasarkan koordinat (fallback jika API gagal)
  */
 function estimateElevation(lat: number, lng: number): number {
-  // Estimasi kasar berdasarkan wilayah di Indonesia
-  // Jawa: banyak pegunungan di tengah
-  // Sumatera: Bukit Barisan
-  // Sulawesi: pegunungan di tengah
+  let elevation = 50;
   
-  // Base elevation dari latitude (semakin ke selatan di Jawa = lebih tinggi)
-  let elevation = 50; // base
-  
-  // Cek apakah di area pegunungan utama Indonesia
-  // Jawa Tengah/Yogyakarta: -7.5 sampai -8.0
-  if (lat > -8.0 && lat < -7.0 && lng > 109 && lng < 112) {
+  // Manado area: dataran rendah dengan bukit di sekitar
+  if (lat > 1.3 && lat < 1.6 && lng > 124.7 && lng < 125.0) {
+    elevation = 10 + Math.random() * 80;
+  }
+  // Limboto/Gorontalo: sekitar danau, dataran rendah
+  else if (lat > 0.4 && lat < 0.7 && lng > 122.8 && lng < 123.2) {
+    elevation = 5 + Math.random() * 50;
+  }
+  // Trans Sulawesi (pegunungan tengah)
+  else if (lat > -2 && lat < 2 && lng > 119.5 && lng < 124) {
+    elevation = 200 + Math.random() * 600;
+  }
+  // Jawa Tengah/Yogyakarta: pegunungan
+  else if (lat > -8.0 && lat < -7.0 && lng > 109 && lng < 112) {
     elevation = 300 + Math.random() * 500;
   }
   // Sumatera Barat: Bukit Barisan
   else if (lat > -2 && lat < 1 && lng > 99 && lng < 102) {
     elevation = 400 + Math.random() * 800;
   }
-  // Sulawesi: pegunungan tengah
-  else if (lat > -3 && lat < 2 && lng > 119 && lng < 123) {
-    elevation = 200 + Math.random() * 600;
-  }
-  // Bali/Lombok
-  else if (lat > -9 && lat < -7.5 && lng > 115 && lng < 117) {
-    elevation = 100 + Math.random() * 400;
-  }
-  // Dataran rendah (pantai)
+  // Dataran rendah umum
   else {
     elevation = 10 + Math.random() * 100;
   }
@@ -212,11 +239,12 @@ function calculateCumulativeDistance(points: {lat: number; lng: number; distance
   for (let i = 1; i <= upToIndex && i < points.length; i++) {
     distance += haversineDistance(points[i-1].lat, points[i-1].lng, points[i].lat, points[i].lng);
   }
-  return distance / 1000; // km
+  return distance / 1000;
 }
 
 /**
  * Analisis rute berdasarkan data elevasi
+ * Tidak menghitung river_crossings karena tidak akurat
  */
 export function analyzeRoute(elevationProfile: ElevationData[]): RouteAnalysis {
   if (elevationProfile.length === 0) {
@@ -259,46 +287,169 @@ export function analyzeRoute(elevationProfile: ElevationData[]): RouteAnalysis {
       if (absGradient > maxGradient) maxGradient = absGradient;
       totalGradient += absGradient;
       
-      if (absGradient > 10) {
+      if (absGradient > 8) {
         steepSegments.push({ km: point.distance_km, gradient: point.gradient });
       }
-    }
-  }
-  
-  // Estimasi segmen off-road berdasarkan gradient tinggi dan elevasi
-  const offRoadSegments = steepSegments.filter(s => Math.abs(s.gradient) > 15).length;
-  
-  // Estimasi penyeberangan sungai (berdasarkan penurunan tajam diikuti kenaikan)
-  let riverCrossings = 0;
-  for (let i = 2; i < elevationProfile.length; i++) {
-    const prev = elevationProfile[i-2].elevation_m;
-    const curr = elevationProfile[i-1].elevation_m;
-    const next = elevationProfile[i].elevation_m;
-    
-    if (curr < prev - 20 && curr < next - 20 && curr < 50) {
-      riverCrossings++;
     }
   }
   
   return {
     total_ascent_m: totalAscent,
     total_descent_m: totalDescent,
-    max_elevation_m: maxElevation,
-    min_elevation_m: minElevation,
+    max_elevation_m: maxElevation === -Infinity ? 0 : maxElevation,
+    min_elevation_m: minElevation === Infinity ? 0 : minElevation,
     max_gradient: maxGradient,
     avg_gradient: totalGradient / elevationProfile.length,
     steep_segments: steepSegments,
-    off_road_segments: Math.min(offRoadSegments, 10),
-    river_crossings: Math.min(riverCrossings, 5),
+    off_road_segments: 0, // Tidak diestimasi lagi karena tidak akurat
+    river_crossings: 0,   // Tidak diestimasi lagi karena tidak akurat
     elevation_profile: elevationProfile
   };
 }
 
 /**
- * Haversine formula untuk menghitung jarak antara 2 titik koordinat
+ * Query POI (SPBU, Indomaret, Alfamart) di sepanjang rute menggunakan Overpass API
+ * Buffer 300m di sekitar rute
+ */
+export async function queryPOIsAlongRoute(
+  routeCoordinates: [number, number][] // [lat, lng]
+): Promise<POI[]> {
+  if (routeCoordinates.length === 0) return [];
+  
+  // Sample koordinat untuk query (max ~50 titik agar query tidak terlalu besar)
+  const sampleRate = Math.max(1, Math.floor(routeCoordinates.length / 50));
+  const sampledCoords = routeCoordinates.filter((_, i) => i % sampleRate === 0);
+  
+  // Bangun query Overpass dengan buffer sekitar rute
+  // Gunakan multiple "around" queries di setiap titik sampel
+  const bufferMeters = 300;
+  
+  // Bangun list of coordinates untuk around query
+  const aroundQueries = sampledCoords
+    .map(c => `(around:${bufferMeters},${c[0]},${c[1]})`)
+    .join('');
+  
+  const overpassQuery = `
+    [out:json][timeout:30];
+    (
+      node["amenity"="fuel"]${aroundQueries};
+      node["shop"="convenience"]["brand"="Indomaret"]${aroundQueries};
+      node["shop"="convenience"]["brand"="Alfamart"]${aroundQueries};
+      node["shop"="convenience"]["brand"="Alfamidi"]${aroundQueries};
+    );
+    out body;
+  `;
+  
+  try {
+    const response = await fetch('https://overpass-api.de/api/interpreter', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `data=${encodeURIComponent(overpassQuery)}`
+    });
+    
+    if (!response.ok) {
+      console.warn('Overpass API gagal:', response.status);
+      return [];
+    }
+    
+    const data = await response.json();
+    const elements = data.elements || [];
+    
+    // Konversi ke POI dan hitung jarak terdekat dari rute
+    const pois: POI[] = [];
+    const seen = new Set<string>();
+    
+    for (const el of elements) {
+      if (!el.lat || !el.lon) continue;
+      
+      // Dedup berdasarkan koordinat (hindari duplikasi)
+      const key = `${el.lat.toFixed(4)},${el.lon.toFixed(4)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      
+      // Tentukan tipe POI
+      let type: POIType = 'other';
+      let name = el.tags?.name || '';
+      let brand = el.tags?.brand || '';
+      
+      if (el.tags?.amenity === 'fuel') {
+        type = 'spbu';
+        if (!name) name = brand || 'SPBU';
+      } else if (brand === 'Indomaret') {
+        type = 'indomaret';
+        if (!name) name = 'Indomaret';
+      } else if (brand === 'Alfamart' || brand === 'Alfamidi') {
+        type = 'alfamart';
+        if (!name) name = brand;
+      } else {
+        type = 'minimarket';
+        if (!name) name = 'Minimarket';
+      }
+      
+      // Hitung jarak terdekat dari rute
+      let minDistanceKm = Infinity;
+      for (const coord of sampledCoords) {
+        const dist = haversineDistance(el.lat, el.lon, coord[0], coord[1]);
+        if (dist < minDistanceKm) minDistanceKm = dist;
+      }
+      
+      // Hitung jarak dari titik awal rute (sepanjang rute)
+      const distanceFromStart = estimateDistanceAlongRoute(
+        el.lat, el.lon, routeCoordinates
+      );
+      
+      pois.push({
+        lat: el.lat,
+        lng: el.lon,
+        name,
+        type,
+        brand,
+        distance_from_route_m: minDistanceKm,
+        distance_from_start_km: distanceFromStart
+      });
+    }
+    
+    // Sort berdasarkan jarak dari start
+    pois.sort((a, b) => a.distance_from_start_km - b.distance_from_start_km);
+    
+    return pois;
+  } catch (error) {
+    console.warn('Gagal query POI:', error);
+    return [];
+  }
+}
+
+/**
+ * Estimasi jarak POI dari titik awal rute (proyeksi ke rute terdekat)
+ */
+function estimateDistanceAlongRoute(
+  poiLat: number,
+  poiLng: number,
+  routeCoordinates: [number, number][]
+): number {
+  let minDistance = Infinity;
+  let closestIdx = 0;
+  
+  for (let i = 0; i < routeCoordinates.length; i++) {
+    const dist = haversineDistance(poiLat, poiLng, routeCoordinates[i][0], routeCoordinates[i][1]);
+    if (dist < minDistance) {
+      minDistance = dist;
+      closestIdx = i;
+    }
+  }
+  
+  // Estimasi jarak sepanjang rute = proporsi index * total jarak
+  // Ini aproksimasi karena kita tidak punya jarak kumulatif di sini
+  const ratio = closestIdx / Math.max(1, routeCoordinates.length - 1);
+  // Kita akan return rasio, akan dikalikan total distance di caller
+  return ratio; // akan di-scale di App.tsx
+}
+
+/**
+ * Haversine formula untuk menghitung jarak antara 2 titik koordinat (dalam meter)
  */
 function haversineDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const R = 6371000; // radius bumi dalam meter
+  const R = 6371000;
   const dLat = toRad(lat2 - lat1);
   const dLon = toRad(lon2 - lon1);
   const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +

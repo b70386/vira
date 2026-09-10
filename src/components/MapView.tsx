@@ -1,11 +1,12 @@
 import { useEffect, useRef } from 'react';
 import L from 'leaflet';
-import { Waypoint } from '../types';
+import { Waypoint, POI } from '../types';
 
 interface MapViewProps {
   routeCoordinates: [number, number][]; // [lat, lng]
   waypoints: Waypoint[];
   elevationData: { distance_km: number; elevation_m: number; gradient: number }[];
+  pois: POI[];
 }
 
 // Warna marker untuk setiap waypoint
@@ -16,7 +17,7 @@ const MARKER_COLORS: Record<string, string> = {
   D: '#ef4444', // red
 };
 
-export default function MapView({ routeCoordinates, waypoints, elevationData }: MapViewProps) {
+export default function MapView({ routeCoordinates, waypoints, elevationData, pois }: MapViewProps) {
   const mapRef = useRef<L.Map | null>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const routeLayerRef = useRef<L.LayerGroup | null>(null);
@@ -159,7 +160,44 @@ export default function MapView({ routeCoordinates, waypoints, elevationData }: 
         }
       });
     }
-  }, [routeCoordinates, waypoints, elevationData]);
+
+    // Tambah marker untuk POI (SPBU, Indomaret, Alfamart)
+    if (pois.length > 0) {
+      pois.forEach((poi) => {
+        let iconHtml = '';
+        let popupContent = '';
+        
+        switch (poi.type) {
+          case 'spbu':
+            iconHtml = '<div style="width:28px;height:28px;background:#f59e0b;border-radius:6px;border:2px solid white;box-shadow:0 2px 4px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;font-size:14px;">⛽</div>';
+            popupContent = `<b>⛽ SPBU</b><br>${poi.name}<br>KM: ${poi.distance_from_start_km.toFixed(1)}`;
+            break;
+          case 'indomaret':
+            iconHtml = '<div style="width:26px;height:26px;background:#ef4444;border-radius:6px;border:2px solid white;box-shadow:0 2px 4px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;font-size:12px;color:white;font-weight:bold;">I</div>';
+            popupContent = `<b>🏪 Indomaret</b><br>${poi.name}<br>KM: ${poi.distance_from_start_km.toFixed(1)}`;
+            break;
+          case 'alfamart':
+            iconHtml = '<div style="width:26px;height:26px;background:#3b82f6;border-radius:6px;border:2px solid white;box-shadow:0 2px 4px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;font-size:12px;color:white;font-weight:bold;">A</div>';
+            popupContent = `<b>🏪 Alfamart</b><br>${poi.name}<br>KM: ${poi.distance_from_start_km.toFixed(1)}`;
+            break;
+          default:
+            iconHtml = '<div style="width:24px;height:24px;background:#8b5cf6;border-radius:6px;border:2px solid white;box-shadow:0 2px 4px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;font-size:11px;color:white;">M</div>';
+            popupContent = `<b>🏪 Minimarket</b><br>${poi.name}<br>KM: ${poi.distance_from_start_km.toFixed(1)}`;
+        }
+        
+        const poiIcon = L.divIcon({
+          className: 'custom-marker',
+          html: iconHtml,
+          iconSize: poi.type === 'spbu' ? [28, 28] : [26, 26],
+          iconAnchor: poi.type === 'spbu' ? [14, 14] : [13, 13],
+        });
+        
+        L.marker([poi.lat, poi.lng], { icon: poiIcon })
+          .bindPopup(popupContent)
+          .addTo(markersLayer);
+      });
+    }
+  }, [routeCoordinates, waypoints, elevationData, pois]);
 
   return (
     <div className="relative w-full h-full min-h-[400px] rounded-xl overflow-hidden shadow-lg border border-gray-200 dark:border-gray-700">
@@ -191,6 +229,23 @@ export default function MapView({ routeCoordinates, waypoints, elevationData }: 
                 </span>
               </div>
             ))}
+          </>
+        )}
+        {pois.length > 0 && (
+          <>
+            <p className="font-semibold mb-1 text-gray-700 dark:text-gray-200 border-t border-gray-200 dark:border-gray-600 pt-1.5">Fasilitas:</p>
+            <div className="flex items-center gap-2 mb-0.5">
+              <span className="text-xs">⛽</span>
+              <span className="text-gray-600 dark:text-gray-300">SPBU ({pois.filter(p => p.type === 'spbu').length})</span>
+            </div>
+            <div className="flex items-center gap-2 mb-0.5">
+              <span className="text-xs text-red-500 font-bold">I</span>
+              <span className="text-gray-600 dark:text-gray-300">Indomaret ({pois.filter(p => p.type === 'indomaret').length})</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-blue-500 font-bold">A</span>
+              <span className="text-gray-600 dark:text-gray-300">Alfamart ({pois.filter(p => p.type === 'alfamart').length})</span>
+            </div>
           </>
         )}
       </div>

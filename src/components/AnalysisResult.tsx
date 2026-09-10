@@ -1,6 +1,8 @@
 import { FeasibilityResult, RouteAnalysis } from '../types';
 import { Vehicle } from '../data/vehicles';
 
+import { POI } from '../types';
+
 interface AnalysisResultProps {
   result: FeasibilityResult | null;
   routeAnalysis: RouteAnalysis | null;
@@ -8,9 +10,10 @@ interface AnalysisResultProps {
   distanceKm: number;
   durationMinutes: number;
   waypoints?: { lat: number; lng: number; name: string; label: string }[];
+  pois?: POI[];
 }
 
-export default function AnalysisResult({ result, routeAnalysis, vehicle, distanceKm, durationMinutes, waypoints }: AnalysisResultProps) {
+export default function AnalysisResult({ result, routeAnalysis, vehicle, distanceKm, durationMinutes, waypoints, pois = [] }: AnalysisResultProps) {
   if (!result || !routeAnalysis || !vehicle) return null;
 
   const getVerdictStyle = (verdict: string) => {
@@ -114,6 +117,76 @@ export default function AnalysisResult({ result, routeAnalysis, vehicle, distanc
             <div className="text-xs text-gray-500 dark:text-gray-400">Est. BBM</div>
           </div>
         </div>
+
+        {/* Info POI (SPBU, Indomaret, Alfamart) */}
+        {pois.length > 0 && (
+          <div className="mt-4">
+            <h4 className="font-semibold text-gray-700 dark:text-gray-200 mb-2 flex items-center gap-2">
+              🏪 Fasilitas di Sepanjang Rute
+            </h4>
+            <div className="grid grid-cols-3 gap-2 mb-3">
+              <div className="bg-amber-50 dark:bg-amber-900/20 rounded-lg p-2 text-center border border-amber-200 dark:border-amber-800">
+                <div className="text-xl font-bold text-amber-700 dark:text-amber-300">
+                  {pois.filter(p => p.type === 'spbu').length}
+                </div>
+                <div className="text-xs text-amber-600 dark:text-amber-400">⛽ SPBU</div>
+              </div>
+              <div className="bg-red-50 dark:bg-red-900/20 rounded-lg p-2 text-center border border-red-200 dark:border-red-800">
+                <div className="text-xl font-bold text-red-700 dark:text-red-300">
+                  {pois.filter(p => p.type === 'indomaret').length}
+                </div>
+                <div className="text-xs text-red-600 dark:text-red-400">🏪 Indomaret</div>
+              </div>
+              <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-2 text-center border border-blue-200 dark:border-blue-800">
+                <div className="text-xl font-bold text-blue-700 dark:text-blue-300">
+                  {pois.filter(p => p.type === 'alfamart').length}
+                </div>
+                <div className="text-xs text-blue-600 dark:text-blue-400">🏪 Alfamart</div>
+              </div>
+            </div>
+
+            {/* Daftar SPBU dengan jarak */}
+            {pois.filter(p => p.type === 'spbu').length > 0 && (
+              <div className="bg-gray-50 dark:bg-gray-700/30 rounded-lg p-3 mb-2">
+                <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">⛽ SPBU terdekat:</p>
+                <div className="space-y-1 max-h-32 overflow-y-auto">
+                  {pois.filter(p => p.type === 'spbu').slice(0, 8).map((poi, idx) => (
+                    <div key={idx} className="flex justify-between items-center text-xs">
+                      <span className="text-gray-700 dark:text-gray-300 truncate flex-1">
+                        {poi.name || 'SPBU'}
+                      </span>
+                      <span className="text-gray-500 dark:text-gray-400 ml-2 shrink-0">
+                        KM {poi.distance_from_start_km.toFixed(1)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Daftar Minimarket dengan jarak */}
+            {pois.filter(p => p.type === 'indomaret' || p.type === 'alfamart').length > 0 && (
+              <div className="bg-gray-50 dark:bg-gray-700/30 rounded-lg p-3">
+                <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">🏪 Minimarket terdekat:</p>
+                <div className="space-y-1 max-h-32 overflow-y-auto">
+                  {pois.filter(p => p.type === 'indomaret' || p.type === 'alfamart').slice(0, 8).map((poi, idx) => (
+                    <div key={idx} className="flex justify-between items-center text-xs">
+                      <span className="text-gray-700 dark:text-gray-300 truncate flex-1">
+                        <span className={poi.type === 'indomaret' ? 'text-red-500' : 'text-blue-500'}>
+                          {poi.type === 'indomaret' ? '●' : '●'}
+                        </span>{' '}
+                        {poi.name || (poi.type === 'indomaret' ? 'Indomaret' : 'Alfamart')}
+                      </span>
+                      <span className="text-gray-500 dark:text-gray-400 ml-2 shrink-0">
+                        KM {poi.distance_from_start_km.toFixed(1)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Detail Analisis */}

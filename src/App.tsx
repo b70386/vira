@@ -5,9 +5,9 @@ import VehicleSelector from './components/VehicleSelector';
 import AnalysisResult from './components/AnalysisResult';
 import ElevationChart from './components/ElevationChart';
 import { Vehicle } from './data/vehicles';
-import { getRoute, getElevationData, analyzeRoute } from './utils/routing';
+import { getRoute, getElevationData, analyzeRoute, queryPOIsAlongRoute } from './utils/routing';
 import { analyzeFeasibility } from './utils/analysis';
-import { RouteAnalysis, FeasibilityResult, ElevationData, Waypoint } from './types';
+import { RouteAnalysis, FeasibilityResult, ElevationData, Waypoint, POI } from './types';
 
 function App() {
   // State untuk 4 waypoints (asal + 3 tujuan perantara)
@@ -23,6 +23,7 @@ function App() {
   const [feasibilityResult, setFeasibilityResult] = useState<FeasibilityResult | null>(null);
   const [distanceKm, setDistanceKm] = useState(0);
   const [durationMinutes, setDurationMinutes] = useState(0);
+  const [pois, setPois] = useState<POI[]>([]);
   
   // State untuk loading dan error
   const [isLoading, setIsLoading] = useState(false);
@@ -58,6 +59,7 @@ function App() {
     setRouteAnalysis(null);
     setElevationData([]);
     setRouteCoordinates([]);
+    setPois([]);
 
     try {
       // Step 1: Dapatkan rute multi-waypoint
@@ -96,9 +98,25 @@ function App() {
       const analysis = analyzeRoute(elevWithDistance);
       setRouteAnalysis(analysis);
 
-      // Step 5: Analisis kelayakan
+      // Step 5: Query POI (SPBU, Indomaret, Alfamart) di sepanjang rute
+      setLoadingStep('Mencari SPBU & minimarket di sekitar rute...');
+      let scaledPois: POI[] = [];
+      try {
+        const poiResults = await queryPOIsAlongRoute(coords);
+        // Scale distance_from_start_km dari rasio ke km actual
+        scaledPois = poiResults.map(poi => ({
+          ...poi,
+          distance_from_start_km: poi.distance_from_start_km * route.distance_km
+        }));
+        setPois(scaledPois);
+      } catch (err) {
+        console.warn('Gagal query POI:', err);
+        // Tidak block analisis jika POI gagal
+      }
+
+      // Step 6: Analisis kelayakan (dengan data POI)
       setLoadingStep('Mengevaluasi kelayakan kendaraan...');
-      const feasibility = analyzeFeasibility(selectedVehicle, analysis);
+      const feasibility = analyzeFeasibility(selectedVehicle, analysis, scaledPois);
       setFeasibilityResult(feasibility);
 
       setLoadingStep('Selesai!');
@@ -198,6 +216,7 @@ function App() {
                 routeCoordinates={routeCoordinates}
                 waypoints={waypoints.filter((w): w is Waypoint => w !== null)}
                 elevationData={elevationData}
+                pois={pois}
               />
             </div>
 
@@ -215,6 +234,7 @@ function App() {
                 distanceKm={distanceKm}
                 durationMinutes={durationMinutes}
                 waypoints={waypoints.filter((w): w is Waypoint => w !== null)}
+                pois={pois}
               />
             )}
 
