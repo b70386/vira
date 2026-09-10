@@ -104,6 +104,20 @@ Aplikasi web untuk mensimulasikan kelayakan kendaraan pada rute tertentu di Indo
 
 ## 🎬 Demo
 
+### 📸 Screenshots Aplikasi
+
+| Tampilan Utama & Input Rute | Analisis Elevasi & Peta |
+| :---: | :---: |
+| <img src="docs/images/vira1.jpg" alt="Tampilan Utama" width="400" /> | <img src="docs/images/vira2.jpg" alt="Analisis Elevasi" width="400" /> |
+
+| Detail Kendaraan & POI | Hasil Skor Kelayakan |
+| :---: | :---: |
+| <img src="docs/images/vira3.jpg" alt="Detail Kendaraan" width="400" /> | <img src="docs/images/vira4.jpg" alt="Hasil Analisis" width="400" /> |
+
+> **Catatan:** Aplikasi ini menggunakan data OpenStreetMap dan API publik untuk memberikan simulasi rute yang realistis di Indonesia.
+
+
+
 ### Contoh Skenario Penggunaan
 
 **Input:**
