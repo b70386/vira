@@ -103,11 +103,13 @@ function App() {
       let scaledPois: POI[] = [];
       try {
         const poiResults = await queryPOIsAlongRoute(coords);
+        console.log('POI results:', poiResults.length, poiResults);
         // Scale distance_from_start_km dari rasio ke km actual
         scaledPois = poiResults.map(poi => ({
           ...poi,
           distance_from_start_km: poi.distance_from_start_km * route.distance_km
         }));
+        console.log('Scaled POIs:', scaledPois);
         setPois(scaledPois);
       } catch (err) {
         console.warn('Gagal query POI:', err);

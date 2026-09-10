@@ -309,38 +309,46 @@ export function analyzeRoute(elevationProfile: ElevationData[]): RouteAnalysis {
 
 /**
  * Query POI (SPBU, Indomaret, Alfamart) di sepanjang rute menggunakan Overpass API
- * Buffer 300m di sekitar rute
+ * Buffer 500m di sekitar rute
  */
 export async function queryPOIsAlongRoute(
   routeCoordinates: [number, number][] // [lat, lng]
 ): Promise<POI[]> {
   if (routeCoordinates.length === 0) return [];
   
-  // Sample koordinat untuk query (max ~50 titik agar query tidak terlalu besar)
-  const sampleRate = Math.max(1, Math.floor(routeCoordinates.length / 50));
-  const sampledCoords = routeCoordinates.filter((_, i) => i % sampleRate === 0);
+  // Hitung bounding box dari rute
+  let minLat = 90, maxLat = -90, minLng = 180, maxLng = -180;
+  for (const [lat, lng] of routeCoordinates) {
+    if (lat < minLat) minLat = lat;
+    if (lat > maxLat) maxLat = lat;
+    if (lng < minLng) minLng = lng;
+    if (lng > maxLng) maxLng = lng;
+  }
   
-  // Bangun query Overpass dengan buffer sekitar rute
-  // Gunakan multiple "around" queries di setiap titik sampel
-  const bufferMeters = 300;
+  // Tambah buffer sekitar 0.01 derajat (~1km)
+  const buffer = 0.01;
+  minLat -= buffer;
+  maxLat += buffer;
+  minLng -= buffer;
+  maxLng += buffer;
   
-  // Bangun list of coordinates untuk around query
-  const aroundQueries = sampledCoords
-    .map(c => `(around:${bufferMeters},${c[0]},${c[1]})`)
-    .join('');
-  
+  // Query menggunakan bounding box (lebih reliable)
+  // Pisahkan query per brand agar lebih eksplisit
   const overpassQuery = `
-    [out:json][timeout:30];
-    (
-      node["amenity"="fuel"]${aroundQueries};
-      node["shop"="convenience"]["brand"="Indomaret"]${aroundQueries};
-      node["shop"="convenience"]["brand"="Alfamart"]${aroundQueries};
-      node["shop"="convenience"]["brand"="Alfamidi"]${aroundQueries};
-    );
-    out body;
-  `;
+[out:json][timeout:30];
+(
+  node["amenity"="fuel"](${minLat},${minLng},${maxLat},${maxLng});
+  node["shop"="convenience"]["brand"="Indomaret"](${minLat},${minLng},${maxLat},${maxLng});
+  node["shop"="convenience"]["brand"="Alfamart"](${minLat},${minLng},${maxLat},${maxLng});
+  node["shop"="convenience"]["brand"="Alfamidi"](${minLat},${minLng},${maxLat},${maxLng});
+  node["name"~"Indomaret"](${minLat},${minLng},${maxLat},${maxLng});
+  node["name"~"Alfamart"](${minLat},${minLng},${maxLat},${maxLng});
+);
+out body;
+`;
   
   try {
+    console.log('Overpass query:', overpassQuery);
     const response = await fetch('https://overpass-api.de/api/interpreter', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -348,12 +356,14 @@ export async function queryPOIsAlongRoute(
     });
     
     if (!response.ok) {
-      console.warn('Overpass API gagal:', response.status);
+      console.warn('Overpass API gagal:', response.status, response.statusText);
       return [];
     }
     
     const data = await response.json();
+    console.log('Overpass response:', data);
     const elements = data.elements || [];
+    console.log('Elements found:', elements.length);
     
     // Konversi ke POI dan hitung jarak terdekat dari rute
     const pois: POI[] = [];
@@ -375,20 +385,20 @@ export async function queryPOIsAlongRoute(
       if (el.tags?.amenity === 'fuel') {
         type = 'spbu';
         if (!name) name = brand || 'SPBU';
-      } else if (brand === 'Indomaret') {
+      } else if (brand === 'Indomaret' || name.toLowerCase().includes('indomaret')) {
         type = 'indomaret';
         if (!name) name = 'Indomaret';
-      } else if (brand === 'Alfamart' || brand === 'Alfamidi') {
+      } else if (brand === 'Alfamart' || brand === 'Alfamidi' || name.toLowerCase().includes('alfamart') || name.toLowerCase().includes('alfamidi')) {
         type = 'alfamart';
-        if (!name) name = brand;
+        if (!name) name = brand || 'Alfamart';
       } else {
-        type = 'minimarket';
-        if (!name) name = 'Minimarket';
+        // Skip POI yang tidak jelas tipenya
+        continue;
       }
       
       // Hitung jarak terdekat dari rute
       let minDistanceKm = Infinity;
-      for (const coord of sampledCoords) {
+      for (const coord of routeCoordinates) {
         const dist = haversineDistance(el.lat, el.lon, coord[0], coord[1]);
         if (dist < minDistanceKm) minDistanceKm = dist;
       }
@@ -421,6 +431,7 @@ export async function queryPOIsAlongRoute(
 
 /**
  * Estimasi jarak POI dari titik awal rute (proyeksi ke rute terdekat)
+ * Return rasio 0-1 yang akan di-scale ke km actual di caller
  */
 function estimateDistanceAlongRoute(
   poiLat: number,
@@ -438,11 +449,8 @@ function estimateDistanceAlongRoute(
     }
   }
   
-  // Estimasi jarak sepanjang rute = proporsi index * total jarak
-  // Ini aproksimasi karena kita tidak punya jarak kumulatif di sini
-  const ratio = closestIdx / Math.max(1, routeCoordinates.length - 1);
-  // Kita akan return rasio, akan dikalikan total distance di caller
-  return ratio; // akan di-scale di App.tsx
+  // Return rasio posisi POI di sepanjang rute (0 = start, 1 = end)
+  return closestIdx / Math.max(1, routeCoordinates.length - 1);
 }
 
 /**
