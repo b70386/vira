@@ -325,24 +325,38 @@ export async function queryPOIsAlongRoute(
     if (lng > maxLng) maxLng = lng;
   }
   
-  // Tambah buffer sekitar 0.01 derajat (~1km)
-  const buffer = 0.01;
+  // Tambah buffer sekitar 0.02 derajat (~2km) untuk menangkap POI di sekitar rute
+  const buffer = 0.02;
   minLat -= buffer;
   maxLat += buffer;
   minLng -= buffer;
   maxLng += buffer;
   
-  // Query menggunakan bounding box (lebih reliable)
-  // Pisahkan query per brand agar lebih eksplisit
+  // Query menggunakan bounding box dengan berbagai variasi tag
+  // Di OSM Indonesia, POI bisa menggunakan tag: brand, operator, name, atau kombinasi
   const overpassQuery = `
 [out:json][timeout:30];
 (
+  // SPBU - semua variasi
   node["amenity"="fuel"](${minLat},${minLng},${maxLat},${maxLng});
-  node["shop"="convenience"]["brand"="Indomaret"](${minLat},${minLng},${maxLat},${maxLng});
-  node["shop"="convenience"]["brand"="Alfamart"](${minLat},${minLng},${maxLat},${maxLng});
-  node["shop"="convenience"]["brand"="Alfamidi"](${minLat},${minLng},${maxLat},${maxLng});
-  node["name"~"Indomaret"](${minLat},${minLng},${maxLat},${maxLng});
-  node["name"~"Alfamart"](${minLat},${minLng},${maxLat},${maxLng});
+  
+  // Indomaret - berbagai tag yang mungkin digunakan
+  node["brand"="Indomaret"](${minLat},${minLng},${maxLat},${maxLng});
+  node["operator"="Indomaret"](${minLat},${minLng},${maxLat},${maxLng});
+  node["name"~"Indomaret",i](${minLat},${minLng},${maxLat},${maxLng});
+  node["shop"="convenience"]["name"~"Indomaret",i](${minLat},${minLng},${maxLat},${maxLng});
+  node["shop"="supermarket"]["name"~"Indomaret",i](${minLat},${minLng},${maxLat},${maxLng});
+  
+  // Alfamart - berbagai tag yang mungkin digunakan
+  node["brand"="Alfamart"](${minLat},${minLng},${maxLat},${maxLng});
+  node["operator"="Alfamart"](${minLat},${minLng},${maxLat},${maxLng});
+  node["name"~"Alfamart",i](${minLat},${minLng},${maxLat},${maxLng});
+  node["shop"="convenience"]["name"~"Alfamart",i](${minLat},${minLng},${maxLat},${maxLng});
+  node["shop"="supermarket"]["name"~"Alfamart",i](${minLat},${minLng},${maxLat},${maxLng});
+  
+  // Alfamidi
+  node["brand"="Alfamidi"](${minLat},${minLng},${maxLat},${maxLng});
+  node["name"~"Alfamidi",i](${minLat},${minLng},${maxLat},${maxLng});
 );
 out body;
 `;
@@ -361,9 +375,17 @@ out body;
     }
     
     const data = await response.json();
-    console.log('Overpass response:', data);
     const elements = data.elements || [];
-    console.log('Elements found:', elements.length);
+    console.log(`[POI Query] Elements found: ${elements.length}`);
+    
+    // Log beberapa contoh untuk debugging
+    if (elements.length > 0) {
+      console.log('[POI Query] Sample elements:', elements.slice(0, 3).map((el: any) => ({
+        id: el.id,
+        type: el.type,
+        tags: el.tags
+      })));
+    }
     
     // Konversi ke POI dan hitung jarak terdekat dari rute
     const pois: POI[] = [];
@@ -381,16 +403,18 @@ out body;
       let type: POIType = 'other';
       let name = el.tags?.name || '';
       let brand = el.tags?.brand || '';
+      let operator = el.tags?.operator || '';
+      const combined = `${name} ${brand} ${operator}`.toLowerCase();
       
-      if (el.tags?.amenity === 'fuel') {
+      if (el.tags?.amenity === 'fuel' || combined.includes('spbu') || combined.includes('pertamina') || combined.includes('shell') || combined.includes('bp ') || combined.includes('vivo')) {
         type = 'spbu';
-        if (!name) name = brand || 'SPBU';
-      } else if (brand === 'Indomaret' || name.toLowerCase().includes('indomaret')) {
+        if (!name) name = brand || operator || 'SPBU';
+      } else if (combined.includes('indomaret')) {
         type = 'indomaret';
         if (!name) name = 'Indomaret';
-      } else if (brand === 'Alfamart' || brand === 'Alfamidi' || name.toLowerCase().includes('alfamart') || name.toLowerCase().includes('alfamidi')) {
+      } else if (combined.includes('alfamart') || combined.includes('alfamidi')) {
         type = 'alfamart';
-        if (!name) name = brand || 'Alfamart';
+        if (!name) name = brand || operator || 'Alfamart';
       } else {
         // Skip POI yang tidak jelas tipenya
         continue;
@@ -402,6 +426,9 @@ out body;
         const dist = haversineDistance(el.lat, el.lon, coord[0], coord[1]);
         if (dist < minDistanceKm) minDistanceKm = dist;
       }
+      
+      // Filter: hanya tampilkan POI yang dalam radius 1km dari rute
+      if (minDistanceKm > 1000) continue;
       
       // Hitung jarak dari titik awal rute (sepanjang rute)
       const distanceFromStart = estimateDistanceAlongRoute(
@@ -421,6 +448,13 @@ out body;
     
     // Sort berdasarkan jarak dari start
     pois.sort((a, b) => a.distance_from_start_km - b.distance_from_start_km);
+    
+    console.log(`[POI Query] Final POIs after filtering: ${pois.length}`);
+    console.log('[POI Query] Breakdown:', {
+      spbu: pois.filter(p => p.type === 'spbu').length,
+      indomaret: pois.filter(p => p.type === 'indomaret').length,
+      alfamart: pois.filter(p => p.type === 'alfamart').length
+    });
     
     return pois;
   } catch (error) {

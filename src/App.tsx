@@ -103,16 +103,19 @@ function App() {
       let scaledPois: POI[] = [];
       try {
         const poiResults = await queryPOIsAlongRoute(coords);
-        console.log('POI results:', poiResults.length, poiResults);
         // Scale distance_from_start_km dari rasio ke km actual
         scaledPois = poiResults.map(poi => ({
           ...poi,
           distance_from_start_km: poi.distance_from_start_km * route.distance_km
         }));
-        console.log('Scaled POIs:', scaledPois);
+        console.log(`[App] POI query complete. Total: ${scaledPois.length}`, {
+          spbu: scaledPois.filter(p => p.type === 'spbu').length,
+          indomaret: scaledPois.filter(p => p.type === 'indomaret').length,
+          alfamart: scaledPois.filter(p => p.type === 'alfamart').length
+        });
         setPois(scaledPois);
       } catch (err) {
-        console.warn('Gagal query POI:', err);
+        console.warn('[App] Gagal query POI:', err);
         // Tidak block analisis jika POI gagal
       }
 
