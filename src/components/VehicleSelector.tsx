@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { vehicles, Vehicle } from '../data/vehicles';
 
 interface VehicleSelectorProps {
@@ -9,16 +9,34 @@ interface VehicleSelectorProps {
 export default function VehicleSelector({ selectedVehicle, onSelect }: VehicleSelectorProps) {
   const [filterMerk, setFilterMerk] = useState<string>('all');
   const [filterBBM, setFilterBBM] = useState<string>('all');
+  const [filterCategory, setFilterCategory] = useState<string>('all');
   const [showDetails, setShowDetails] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
 
   const merks = ['all', ...Array.from(new Set(vehicles.map(v => v.merk)))];
   const bbms = ['all', ...Array.from(new Set(vehicles.map(v => v.bbm)))];
-  
-  const filteredVehicles = vehicles.filter(v => {
-    if (filterMerk !== 'all' && v.merk !== filterMerk) return false;
-    if (filterBBM !== 'all' && v.bbm !== filterBBM) return false;
-    return true;
-  });
+  const categories = ['all', ...Array.from(new Set(vehicles.map(v => v.category)))];
+
+  const filteredVehicles = useMemo(() => {
+    return vehicles
+      .filter(v => {
+        if (filterMerk !== 'all' && v.merk !== filterMerk) return false;
+        if (filterBBM !== 'all' && v.bbm !== filterBBM) return false;
+        if (filterCategory !== 'all' && v.category !== filterCategory) return false;
+        if (searchQuery) {
+          const q = searchQuery.toLowerCase();
+          return v.merk.toLowerCase().includes(q) ||
+                 v.jenis.toLowerCase().includes(q) ||
+                 v.name.toLowerCase().includes(q);
+        }
+        return true;
+      })
+      .sort((a, b) => {
+        // Sort by merk, then by year descending
+        if (a.merk !== b.merk) return a.merk.localeCompare(b.merk);
+        return b.tahun - a.tahun;
+      });
+  }, [filterMerk, filterBBM, filterCategory, searchQuery]);
 
   const getRiskColor = (risk: string) => {
     switch (risk) {
@@ -30,22 +48,46 @@ export default function VehicleSelector({ selectedVehicle, onSelect }: VehicleSe
     }
   };
 
+  const getBBMIcon = (bbm: string) => {
+    switch (bbm) {
+      case 'Solar': return '⛽';
+      case 'Bensin': return '🔥';
+      case 'Listrik': return '⚡';
+      case 'Hybrid': return '🔋';
+      default: return '⛽';
+    }
+  };
+
   return (
     <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-5 border border-gray-200 dark:border-gray-700">
       <h2 className="text-lg font-bold text-gray-800 dark:text-white mb-4 flex items-center gap-2">
         <span className="text-2xl">🚗</span> Pilih Kendaraan
+        <span className="text-xs font-normal text-gray-400 dark:text-gray-500 ml-auto">
+          {filteredVehicles.length} kendaraan
+        </span>
       </h2>
 
+      {/* Search */}
+      <div className="mb-3">
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder="🔍 Cari merk atau model..."
+          className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-800 dark:text-white placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+        />
+      </div>
+
       {/* Filter */}
-      <div className="space-y-3 mb-4">
+      <div className="space-y-2 mb-4">
         <div>
           <label className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1 block">Merk</label>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-1.5">
             {merks.map(merk => (
               <button
                 key={merk}
                 onClick={() => setFilterMerk(merk)}
-                className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
                   filterMerk === merk 
                     ? 'bg-blue-600 text-white' 
                     : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
@@ -59,18 +101,37 @@ export default function VehicleSelector({ selectedVehicle, onSelect }: VehicleSe
         
         <div>
           <label className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1 block">BBM</label>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-1.5">
             {bbms.map(bbm => (
               <button
                 key={bbm}
                 onClick={() => setFilterBBM(bbm)}
-                className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
                   filterBBM === bbm 
                     ? 'bg-blue-600 text-white' 
                     : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
                 }`}
               >
-                {bbm === 'all' ? 'Semua' : bbm}
+                {bbm === 'all' ? 'Semua' : `${getBBMIcon(bbm)} ${bbm}`}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <label className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1 block">Kategori</label>
+          <div className="flex flex-wrap gap-1.5">
+            {categories.map(cat => (
+              <button
+                key={cat}
+                onClick={() => setFilterCategory(cat)}
+                className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+                  filterCategory === cat 
+                    ? 'bg-blue-600 text-white' 
+                    : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
+                }`}
+              >
+                {cat === 'all' ? 'Semua' : cat}
               </button>
             ))}
           </div>
@@ -80,16 +141,16 @@ export default function VehicleSelector({ selectedVehicle, onSelect }: VehicleSe
       {/* Tabel Kendaraan */}
       <div className="max-h-[400px] overflow-y-auto border border-gray-200 dark:border-gray-700 rounded-lg">
         <table className="w-full text-sm">
-          <thead className="bg-gray-50 dark:bg-gray-700 sticky top-0">
+          <thead className="bg-gray-50 dark:bg-gray-700 sticky top-0 z-10">
             <tr>
-              <th className="px-3 py-2 text-left text-xs font-semibold text-gray-600 dark:text-gray-300">Merk</th>
-              <th className="px-3 py-2 text-left text-xs font-semibold text-gray-600 dark:text-gray-300">BBM</th>
-              <th className="px-3 py-2 text-left text-xs font-semibold text-gray-600 dark:text-gray-300">Jenis</th>
-              <th className="px-3 py-2 text-center text-xs font-semibold text-gray-600 dark:text-gray-300">Tahun</th>
-              <th className="px-3 py-2 text-center text-xs font-semibold text-gray-600 dark:text-gray-300">Risiko</th>
+              <th className="px-2 py-2 text-left text-xs font-semibold text-gray-600 dark:text-gray-300">Merk</th>
+              <th className="px-2 py-2 text-left text-xs font-semibold text-gray-600 dark:text-gray-300">BBM</th>
+              <th className="px-2 py-2 text-left text-xs font-semibold text-gray-600 dark:text-gray-300">Jenis</th>
+              <th className="px-2 py-2 text-center text-xs font-semibold text-gray-600 dark:text-gray-300">Thn</th>
+              <th className="px-2 py-2 text-center text-xs font-semibold text-gray-600 dark:text-gray-300">Risiko</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+          <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
             {filteredVehicles.map(vehicle => (
               <tr
                 key={vehicle.id}
@@ -100,17 +161,27 @@ export default function VehicleSelector({ selectedVehicle, onSelect }: VehicleSe
                     : 'hover:bg-gray-50 dark:hover:bg-gray-700/50'
                 }`}
               >
-                <td className="px-3 py-2 text-gray-800 dark:text-gray-200 font-medium">{vehicle.merk}</td>
-                <td className="px-3 py-2 text-gray-600 dark:text-gray-400">{vehicle.bbm}</td>
-                <td className="px-3 py-2 text-gray-700 dark:text-gray-300">{vehicle.jenis}</td>
-                <td className="px-3 py-2 text-center text-gray-600 dark:text-gray-400">{vehicle.tahun}</td>
-                <td className="px-3 py-2 text-center">
-                  <span className={`text-xs px-2 py-0.5 rounded-full ${getRiskColor(vehicle.risk_level)}`}>
+                <td className="px-2 py-1.5 text-gray-800 dark:text-gray-200 font-medium text-xs">{vehicle.merk}</td>
+                <td className="px-2 py-1.5 text-gray-600 dark:text-gray-400 text-xs">
+                  <span className="mr-0.5">{getBBMIcon(vehicle.bbm)}</span>
+                  {vehicle.bbm}
+                </td>
+                <td className="px-2 py-1.5 text-gray-700 dark:text-gray-300 text-xs">{vehicle.jenis}</td>
+                <td className="px-2 py-1.5 text-center text-gray-600 dark:text-gray-400 text-xs">{vehicle.tahun}</td>
+                <td className="px-2 py-1.5 text-center">
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${getRiskColor(vehicle.risk_level)}`}>
                     {vehicle.risk_level}
                   </span>
                 </td>
               </tr>
             ))}
+            {filteredVehicles.length === 0 && (
+              <tr>
+                <td colSpan={5} className="px-4 py-6 text-center text-gray-500 dark:text-gray-400 text-sm">
+                  Tidak ada kendaraan yang cocok dengan filter
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
@@ -124,12 +195,12 @@ export default function VehicleSelector({ selectedVehicle, onSelect }: VehicleSe
                 {selectedVehicle.merk} {selectedVehicle.jenis} ({selectedVehicle.tahun})
               </p>
               <p className="text-xs text-gray-600 dark:text-gray-400 mt-0.5">
-                {selectedVehicle.engine} • {selectedVehicle.drivetrain}
+                {selectedVehicle.engine} • {selectedVehicle.drivetrain} • {selectedVehicle.category}
               </p>
             </div>
             <button
               onClick={() => setShowDetails(!showDetails)}
-              className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
+              className="text-xs text-blue-600 dark:text-blue-400 hover:underline shrink-0 ml-2"
             >
               {showDetails ? 'Sembunyikan' : 'Detail'}
             </button>
@@ -143,6 +214,8 @@ export default function VehicleSelector({ selectedVehicle, onSelect }: VehicleSe
               <div>🏋️ Berat: {selectedVehicle.weight_kg}kg</div>
               <div>🌊 Wading: {selectedVehicle.wading_depth_mm}mm</div>
               <div>📐 Approach: {selectedVehicle.approach_angle}°</div>
+              <div>📐 Departure: {selectedVehicle.departure_angle}°</div>
+              <div>🔧 Breakover: {selectedVehicle.breakover_angle}°</div>
               <div className="col-span-2 mt-1 text-gray-500 dark:text-gray-400 italic">
                 💡 {selectedVehicle.notes}
               </div>
