@@ -479,7 +479,7 @@ Project ini dilisensikan di bawah **MIT License** - lihat file [LICENSE](LICENSE
 
 Untuk pertanyaan, saran, atau bug report:
 - Buka issue di GitHub repository
-- Email: [your-email@example.com]
+- Email: [not-available@xxxxx.com]
 
 ## ⭐ Support
 
