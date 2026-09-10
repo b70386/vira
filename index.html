@@ -3,7 +3,26 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Rute Realistis - Vehicle Route Feasibility Simulator</title>
+    
+    <!-- Primary Meta Tags -->
+    <title>Vira - Vehicle Route Analysis Simulator</title>
+    <meta name="description" content="Simulasi kelayakan rute kendaraan di Indonesia. Analisis elevasi, gradient, SPBU, dan kondisi khusus." />
+
+    <!-- Open Graph / Facebook / Threads -->
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://b70386.github.io/vira/" />
+    <meta property="og:title" content="Vira - Vehicle Route Analysis Simulator" />
+    <meta property="og:description" content="Simulasi kelayakan rute kendaraan di Indonesia. Analisis elevasi, gradient, SPBU, dan kondisi khusus." />
+    <meta property="og:image" content="https://raw.githubusercontent.com/b70386/vira/main/docs/images/vira1.jpg" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Vira - Vehicle Route Analysis Simulator" />
+    <meta name="twitter:description" content="Simulasi kelayakan rute kendaraan di Indonesia. Analisis elevasi, gradient, SPBU, dan kondisi khusus." />
+    <meta name="twitter:image" content="https://raw.githubusercontent.com/b70386/vira/main/docs/images/vira1.jpg" />
+
     <link
       rel="stylesheet"
       href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
@@ -15,7 +34,7 @@
       crossorigin=""
     />
     <style>
-      /* 内联样式确保主题色立即生效，避免闪烁 */
+      /* Inline styles to ensure theme color applies immediately and prevents flashing */
       html,
       body {
         margin: 0;
@@ -35,7 +54,7 @@
       }
     </style>
     <script>
-      // 在 React 加载前立即设置主题，避免闪烁
+      // Set theme immediately before React loads to prevent flashing
       (function () {
         const isInIframe = window.self !== window.top;
 
@@ -46,7 +65,7 @@
         }
 
         if (isInIframe) {
-          // 监听父窗口主动推送的主题消息
+          // Listen for theme messages from parent window
           window.addEventListener("message", function (event) {
             if (event.data && typeof event.data.theme === "string") {
               const theme = event.data.theme;
@@ -56,21 +75,21 @@
             }
           });
         } else {
-          // 非 iframe 环境，使用默认 light 主题
+          // Non-iframe environment, use default light theme
           applyThemeToDOM("light");
         }
       })();
     </script>
-      <script>
+    <script>
       (function () {
         if (window.self === window.top) return;
         var reported = {};
         window.addEventListener("error", function (event) {
-          // 资源加载失败的 error 事件没有 message，此处仅上报 JS 运行时错误
+          // Resource loading errors don't have a message, only report JS runtime errors here
           if (!event || !event.message) return;
           var key =
             event.message + "|" + (event.filename || "") + "|" + (event.lineno || 0);
-          if (reported[key]) return; // 相同错误只上报一次，避免渲染循环刷屏
+          if (reported[key]) return; // Report same error only once to avoid spamming render loop
           reported[key] = true;
           try {
             window.parent.postMessage(
@@ -90,7 +109,7 @@
               "*"
             );
           } catch (e) {
-            /* 上报失败不影响页面运行 */
+            /* Reporting failure does not affect page operation */
           }
         });
       })();
