@@ -119,11 +119,13 @@ export default function AnalysisResult({ result, routeAnalysis, vehicle, distanc
         </div>
 
         {/* Info POI (SPBU, Indomaret, Alfamart) */}
-        {pois.length > 0 && (
-          <div className="mt-4">
-            <h4 className="font-semibold text-gray-700 dark:text-gray-200 mb-2 flex items-center gap-2">
-              🏪 Fasilitas di Sepanjang Rute
-            </h4>
+        <div className="mt-4">
+          <h4 className="font-semibold text-gray-700 dark:text-gray-200 mb-2 flex items-center gap-2">
+            🏪 Fasilitas di Sepanjang Rute
+          </h4>
+          
+          {pois.length > 0 ? (
+            <>
             <div className="grid grid-cols-3 gap-2 mb-3">
               <div className="bg-amber-50 dark:bg-amber-900/20 rounded-lg p-2 text-center border border-amber-200 dark:border-amber-800">
                 <div className="text-xl font-bold text-amber-700 dark:text-amber-300">
@@ -190,8 +192,18 @@ export default function AnalysisResult({ result, routeAnalysis, vehicle, distanc
                 </div>
               </div>
             )}
-          </div>
-        )}
+            </>
+          ) : (
+            <div className="bg-gray-50 dark:bg-gray-700/30 rounded-lg p-4 text-center">
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                ℹ️ Tidak ada data SPBU/minimarket terdeteksi di area ini.
+              </p>
+              <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+                Data POI berasal dari OpenStreetMap. Pastikan izin lokasi aktif untuk hasil lebih akurat.
+              </p>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Detail Analisis */}

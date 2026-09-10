@@ -332,58 +332,95 @@ export async function queryPOIsAlongRoute(
   minLng -= buffer;
   maxLng += buffer;
   
-  // Query menggunakan bounding box dengan berbagai variasi tag
-  // Di OSM Indonesia, POI bisa menggunakan tag: brand, operator, name, atau kombinasi
-  const overpassQuery = `
-[out:json][timeout:30];
+  // Query sederhana yang pasti bekerja - pisahkan menjadi 3 query terpisah
+  // Query 1: SPBU
+  const spbuQuery = `
+[out:json][timeout:25];
+node["amenity"="fuel"](${minLat},${minLng},${maxLat},${maxLng});
+out body;
+`;
+
+  // Query 2: Indomaret
+  const indomaretQuery = `
+[out:json][timeout:25];
 (
-  // SPBU - semua variasi
-  node["amenity"="fuel"](${minLat},${minLng},${maxLat},${maxLng});
-  
-  // Indomaret - berbagai tag yang mungkin digunakan
   node["brand"="Indomaret"](${minLat},${minLng},${maxLat},${maxLng});
-  node["operator"="Indomaret"](${minLat},${minLng},${maxLat},${maxLng});
   node["name"~"Indomaret",i](${minLat},${minLng},${maxLat},${maxLng});
-  node["shop"="convenience"]["name"~"Indomaret",i](${minLat},${minLng},${maxLat},${maxLng});
-  node["shop"="supermarket"]["name"~"Indomaret",i](${minLat},${minLng},${maxLat},${maxLng});
-  
-  // Alfamart - berbagai tag yang mungkin digunakan
+);
+out body;
+`;
+
+  // Query 3: Alfamart
+  const alfamartQuery = `
+[out:json][timeout:25];
+(
   node["brand"="Alfamart"](${minLat},${minLng},${maxLat},${maxLng});
-  node["operator"="Alfamart"](${minLat},${minLng},${maxLat},${maxLng});
   node["name"~"Alfamart",i](${minLat},${minLng},${maxLat},${maxLng});
-  node["shop"="convenience"]["name"~"Alfamart",i](${minLat},${minLng},${maxLat},${maxLng});
-  node["shop"="supermarket"]["name"~"Alfamart",i](${minLat},${minLng},${maxLat},${maxLng});
-  
-  // Alfamidi
-  node["brand"="Alfamidi"](${minLat},${minLng},${maxLat},${maxLng});
-  node["name"~"Alfamidi",i](${minLat},${minLng},${maxLat},${maxLng});
 );
 out body;
 `;
   
   try {
-    console.log('Overpass query:', overpassQuery);
-    const response = await fetch('https://overpass-api.de/api/interpreter', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: `data=${encodeURIComponent(overpassQuery)}`
-    });
+    // Jalankan 3 query terpisah untuk hasil yang lebih reliable
+    console.log('[POI Query] Bounding box:', { minLat, maxLat, minLng, maxLng });
     
-    if (!response.ok) {
-      console.warn('Overpass API gagal:', response.status, response.statusText);
-      return [];
+    const [spbuResponse, indomaretResponse, alfamartResponse] = await Promise.all([
+      fetch('https://overpass-api.de/api/interpreter', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `data=${encodeURIComponent(spbuQuery)}`
+      }),
+      fetch('https://overpass-api.de/api/interpreter', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `data=${encodeURIComponent(indomaretQuery)}`
+      }),
+      fetch('https://overpass-api.de/api/interpreter', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `data=${encodeURIComponent(alfamartQuery)}`
+      })
+    ]);
+    
+    // Gabungkan semua elements
+    let elements: any[] = [];
+    
+    if (spbuResponse.ok) {
+      const spbuData = await spbuResponse.json();
+      const spbuElements = spbuData.elements || [];
+      console.log(`[POI Query] SPBU found: ${spbuElements.length}`);
+      elements = elements.concat(spbuElements.map((el: any) => ({ ...el, _poiType: 'spbu' })));
+    } else {
+      console.warn('[POI Query] SPBU query failed:', spbuResponse.status);
     }
     
-    const data = await response.json();
-    const elements = data.elements || [];
-    console.log(`[POI Query] Elements found: ${elements.length}`);
+    if (indomaretResponse.ok) {
+      const indomaretData = await indomaretResponse.json();
+      const indomaretElements = indomaretData.elements || [];
+      console.log(`[POI Query] Indomaret found: ${indomaretElements.length}`);
+      elements = elements.concat(indomaretElements.map((el: any) => ({ ...el, _poiType: 'indomaret' })));
+    } else {
+      console.warn('[POI Query] Indomaret query failed:', indomaretResponse.status);
+    }
+    
+    if (alfamartResponse.ok) {
+      const alfamartData = await alfamartResponse.json();
+      const alfamartElements = alfamartData.elements || [];
+      console.log(`[POI Query] Alfamart found: ${alfamartElements.length}`);
+      elements = elements.concat(alfamartElements.map((el: any) => ({ ...el, _poiType: 'alfamart' })));
+    } else {
+      console.warn('[POI Query] Alfamart query failed:', alfamartResponse.status);
+    }
+    
+    console.log(`[POI Query] Total elements: ${elements.length}`);
     
     // Log beberapa contoh untuk debugging
     if (elements.length > 0) {
       console.log('[POI Query] Sample elements:', elements.slice(0, 3).map((el: any) => ({
         id: el.id,
         type: el.type,
-        tags: el.tags
+        tags: el.tags,
+        _poiType: el._poiType
       })));
     }
     
@@ -399,25 +436,17 @@ out body;
       if (seen.has(key)) continue;
       seen.add(key);
       
-      // Tentukan tipe POI
-      let type: POIType = 'other';
+      // Gunakan tipe yang sudah di-set dari query
+      let type: POIType = el._poiType || 'other';
       let name = el.tags?.name || '';
       let brand = el.tags?.brand || '';
       let operator = el.tags?.operator || '';
-      const combined = `${name} ${brand} ${operator}`.toLowerCase();
       
-      if (el.tags?.amenity === 'fuel' || combined.includes('spbu') || combined.includes('pertamina') || combined.includes('shell') || combined.includes('bp ') || combined.includes('vivo')) {
-        type = 'spbu';
-        if (!name) name = brand || operator || 'SPBU';
-      } else if (combined.includes('indomaret')) {
-        type = 'indomaret';
-        if (!name) name = 'Indomaret';
-      } else if (combined.includes('alfamart') || combined.includes('alfamidi')) {
-        type = 'alfamart';
-        if (!name) name = brand || operator || 'Alfamart';
-      } else {
-        // Skip POI yang tidak jelas tipenya
-        continue;
+      // Set nama default jika kosong
+      if (!name) {
+        if (type === 'spbu') name = brand || operator || 'SPBU';
+        else if (type === 'indomaret') name = 'Indomaret';
+        else if (type === 'alfamart') name = brand || 'Alfamart';
       }
       
       // Hitung jarak terdekat dari rute
