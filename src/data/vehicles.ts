@@ -3,8 +3,12 @@
 
 export interface Vehicle {
   id: string;
-  name: string;
-  category: string;
+  merk: string;
+  bbm: string; // Solar, Bensin, Listrik, Hybrid
+  jenis: string; // Innova, Fortuner, Pajero, dll
+  tahun: number;
+  name: string; // Nama lengkap untuk display
+  category: string; // SUV, MPV, Sedan, dll
   ground_clearance_mm: number;
   approach_angle: number;
   departure_angle: number;
@@ -27,6 +31,10 @@ export interface Vehicle {
 export const vehicles: Vehicle[] = [
   {
     id: "prado_2004",
+    merk: "Toyota",
+    bbm: "Solar",
+    jenis: "Land Cruiser Prado",
+    tahun: 2004,
     name: "Toyota Land Cruiser Prado 2004",
     category: "SUV",
     ground_clearance_mm: 220,
@@ -49,6 +57,10 @@ export const vehicles: Vehicle[] = [
   },
   {
     id: "fortuner_2017",
+    merk: "Toyota",
+    bbm: "Solar",
+    jenis: "Fortuner 4x4",
+    tahun: 2017,
     name: "Toyota Fortuner 4x4 Diesel 2017",
     category: "SUV",
     ground_clearance_mm: 225,
@@ -71,6 +83,10 @@ export const vehicles: Vehicle[] = [
   },
   {
     id: "pajero_sport_2020",
+    merk: "Mitsubishi",
+    bbm: "Solar",
+    jenis: "Pajero Sport 4x4",
+    tahun: 2020,
     name: "Mitsubishi Pajero Sport 4x4 2020",
     category: "SUV",
     ground_clearance_mm: 218,
@@ -93,6 +109,10 @@ export const vehicles: Vehicle[] = [
   },
   {
     id: "x5_e53_30i",
+    merk: "BMW",
+    bbm: "Bensin",
+    jenis: "X5 E53 3.0i",
+    tahun: 2004,
     name: "BMW X5 E53 3.0i 2004",
     category: "SUV",
     ground_clearance_mm: 180,
@@ -115,6 +135,10 @@ export const vehicles: Vehicle[] = [
   },
   {
     id: "x5_e70_30si",
+    merk: "BMW",
+    bbm: "Bensin",
+    jenis: "X5 E70 3.0si",
+    tahun: 2008,
     name: "BMW X5 E70 3.0si 2008",
     category: "SUV",
     ground_clearance_mm: 210,
@@ -137,6 +161,10 @@ export const vehicles: Vehicle[] = [
   },
   {
     id: "touareg_32_v6",
+    merk: "VW",
+    bbm: "Bensin",
+    jenis: "Touareg 3.2 V6",
+    tahun: 2009,
     name: "VW Touareg 3.2 V6 2009",
     category: "SUV",
     ground_clearance_mm: 200,
@@ -159,6 +187,10 @@ export const vehicles: Vehicle[] = [
   },
   {
     id: "cayenne_s_955",
+    merk: "Porsche",
+    bbm: "Bensin",
+    jenis: "Cayenne S 4.5 V8",
+    tahun: 2005,
     name: "Porsche Cayenne S 4.5 V8 2005",
     category: "SUV",
     ground_clearance_mm: 217,
@@ -181,6 +213,10 @@ export const vehicles: Vehicle[] = [
   },
   {
     id: "ml350_w164",
+    merk: "Mercedes",
+    bbm: "Bensin",
+    jenis: "ML350 W164",
+    tahun: 2006,
     name: "Mercedes ML350 W164 2006-2011",
     category: "SUV",
     ground_clearance_mm: 210,
@@ -203,6 +239,10 @@ export const vehicles: Vehicle[] = [
   },
   {
     id: "gl500_x164",
+    merk: "Mercedes",
+    bbm: "Bensin",
+    jenis: "GL500 X164",
+    tahun: 2011,
     name: "Mercedes GL500 X164 2011",
     category: "SUV",
     ground_clearance_mm: 307,
@@ -225,6 +265,10 @@ export const vehicles: Vehicle[] = [
   },
   {
     id: "jeep_cherokee_xj",
+    merk: "Jeep",
+    bbm: "Bensin",
+    jenis: "Cherokee XJ",
+    tahun: 1994,
     name: "Jeep Cherokee XJ 1994",
     category: "SUV",
     ground_clearance_mm: 200,
@@ -247,6 +291,10 @@ export const vehicles: Vehicle[] = [
   },
   {
     id: "grand_cherokee_zj",
+    merk: "Jeep",
+    bbm: "Bensin",
+    jenis: "Grand Cherokee ZJ",
+    tahun: 1997,
     name: "Jeep Grand Cherokee ZJ 4.0L 1997",
     category: "SUV",
     ground_clearance_mm: 210,
@@ -269,6 +317,10 @@ export const vehicles: Vehicle[] = [
   },
   {
     id: "innova_reborn_2017",
+    merk: "Toyota",
+    bbm: "Solar",
+    jenis: "Innova Reborn",
+    tahun: 2017,
     name: "Toyota Innova Reborn 2.4 Diesel 2017",
     category: "MPV",
     ground_clearance_mm: 175,
@@ -291,6 +343,10 @@ export const vehicles: Vehicle[] = [
   },
   {
     id: "bmw_730il_f02",
+    merk: "BMW",
+    bbm: "Bensin",
+    jenis: "730iL F02",
+    tahun: 2011,
     name: "BMW 730iL F02 2011",
     category: "Sedan",
     ground_clearance_mm: 130,

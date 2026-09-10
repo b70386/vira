@@ -7,14 +7,18 @@ interface VehicleSelectorProps {
 }
 
 export default function VehicleSelector({ selectedVehicle, onSelect }: VehicleSelectorProps) {
-  const [filter, setFilter] = useState<string>('all');
+  const [filterMerk, setFilterMerk] = useState<string>('all');
+  const [filterBBM, setFilterBBM] = useState<string>('all');
   const [showDetails, setShowDetails] = useState(false);
 
-  const categories = ['all', ...new Set(vehicles.map(v => v.category))];
+  const merks = ['all', ...Array.from(new Set(vehicles.map(v => v.merk)))];
+  const bbms = ['all', ...Array.from(new Set(vehicles.map(v => v.bbm)))];
   
-  const filteredVehicles = filter === 'all' 
-    ? vehicles 
-    : vehicles.filter(v => v.category === filter);
+  const filteredVehicles = vehicles.filter(v => {
+    if (filterMerk !== 'all' && v.merk !== filterMerk) return false;
+    if (filterBBM !== 'all' && v.bbm !== filterBBM) return false;
+    return true;
+  });
 
   const getRiskColor = (risk: string) => {
     switch (risk) {
@@ -33,70 +37,119 @@ export default function VehicleSelector({ selectedVehicle, onSelect }: VehicleSe
       </h2>
 
       {/* Filter */}
-      <div className="flex flex-wrap gap-2 mb-4">
-        {categories.map(cat => (
-          <button
-            key={cat}
-            onClick={() => setFilter(cat)}
-            className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
-              filter === cat 
-                ? 'bg-blue-600 text-white' 
-                : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
-            }`}
-          >
-            {cat === 'all' ? 'Semua' : cat}
-          </button>
-        ))}
+      <div className="space-y-3 mb-4">
+        <div>
+          <label className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1 block">Merk</label>
+          <div className="flex flex-wrap gap-2">
+            {merks.map(merk => (
+              <button
+                key={merk}
+                onClick={() => setFilterMerk(merk)}
+                className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                  filterMerk === merk 
+                    ? 'bg-blue-600 text-white' 
+                    : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
+                }`}
+              >
+                {merk === 'all' ? 'Semua' : merk}
+              </button>
+            ))}
+          </div>
+        </div>
+        
+        <div>
+          <label className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1 block">BBM</label>
+          <div className="flex flex-wrap gap-2">
+            {bbms.map(bbm => (
+              <button
+                key={bbm}
+                onClick={() => setFilterBBM(bbm)}
+                className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                  filterBBM === bbm 
+                    ? 'bg-blue-600 text-white' 
+                    : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
+                }`}
+              >
+                {bbm === 'all' ? 'Semua' : bbm}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
-      {/* List Kendaraan */}
-      <div className="space-y-2 max-h-[350px] overflow-y-auto pr-1">
-        {filteredVehicles.map(vehicle => (
-          <div
-            key={vehicle.id}
-            onClick={() => { onSelect(vehicle); setShowDetails(false); }}
-            className={`p-3 rounded-lg border cursor-pointer transition-all ${
-              selectedVehicle?.id === vehicle.id
-                ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30 ring-2 ring-blue-200 dark:ring-blue-700'
-                : 'border-gray-200 dark:border-gray-600 hover:border-blue-300 dark:hover:border-blue-500 hover:bg-gray-50 dark:hover:bg-gray-700'
-            }`}
-          >
-            <div className="flex justify-between items-start">
-              <div className="flex-1">
-                <p className="font-medium text-sm text-gray-800 dark:text-white">{vehicle.name}</p>
-                <div className="flex items-center gap-2 mt-1">
-                  <span className="text-xs text-gray-500 dark:text-gray-400">{vehicle.drivetrain}</span>
+      {/* Tabel Kendaraan */}
+      <div className="max-h-[400px] overflow-y-auto border border-gray-200 dark:border-gray-700 rounded-lg">
+        <table className="w-full text-sm">
+          <thead className="bg-gray-50 dark:bg-gray-700 sticky top-0">
+            <tr>
+              <th className="px-3 py-2 text-left text-xs font-semibold text-gray-600 dark:text-gray-300">Merk</th>
+              <th className="px-3 py-2 text-left text-xs font-semibold text-gray-600 dark:text-gray-300">BBM</th>
+              <th className="px-3 py-2 text-left text-xs font-semibold text-gray-600 dark:text-gray-300">Jenis</th>
+              <th className="px-3 py-2 text-center text-xs font-semibold text-gray-600 dark:text-gray-300">Tahun</th>
+              <th className="px-3 py-2 text-center text-xs font-semibold text-gray-600 dark:text-gray-300">Risiko</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+            {filteredVehicles.map(vehicle => (
+              <tr
+                key={vehicle.id}
+                onClick={() => { onSelect(vehicle); setShowDetails(false); }}
+                className={`cursor-pointer transition-colors ${
+                  selectedVehicle?.id === vehicle.id
+                    ? 'bg-blue-50 dark:bg-blue-900/30 border-l-4 border-l-blue-500'
+                    : 'hover:bg-gray-50 dark:hover:bg-gray-700/50'
+                }`}
+              >
+                <td className="px-3 py-2 text-gray-800 dark:text-gray-200 font-medium">{vehicle.merk}</td>
+                <td className="px-3 py-2 text-gray-600 dark:text-gray-400">{vehicle.bbm}</td>
+                <td className="px-3 py-2 text-gray-700 dark:text-gray-300">{vehicle.jenis}</td>
+                <td className="px-3 py-2 text-center text-gray-600 dark:text-gray-400">{vehicle.tahun}</td>
+                <td className="px-3 py-2 text-center">
                   <span className={`text-xs px-2 py-0.5 rounded-full ${getRiskColor(vehicle.risk_level)}`}>
                     {vehicle.risk_level}
                   </span>
-                </div>
-              </div>
-              <button
-                onClick={(e) => { e.stopPropagation(); setShowDetails(!showDetails); }}
-                className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
-              >
-                Detail
-              </button>
-            </div>
-            
-            {showDetails && selectedVehicle?.id === vehicle.id && (
-              <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-600 grid grid-cols-2 gap-2 text-xs text-gray-600 dark:text-gray-300">
-                <div>⬆️ Ground: {vehicle.ground_clearance_mm}mm</div>
-                <div>🔧 Mesin: {vehicle.engine}</div>
-                <div>💪 Torsi: {vehicle.torque_nm}Nm</div>
-                <div>⛽ Range: {vehicle.range_km}km</div>
-                <div>🏋️ Berat: {vehicle.weight_kg}kg</div>
-                <div>🌊 Wading: {vehicle.wading_depth_mm}mm</div>
-                <div>📐 Approach: {vehicle.approach_angle}°</div>
-                <div>📐 Departure: {vehicle.departure_angle}°</div>
-                <div className="col-span-2 mt-1 text-gray-500 dark:text-gray-400 italic">
-                  💡 {vehicle.notes}
-                </div>
-              </div>
-            )}
-          </div>
-        ))}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
+
+      {/* Detail Kendaraan Terpilih */}
+      {selectedVehicle && (
+        <div className="mt-4 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+          <div className="flex justify-between items-start mb-2">
+            <div>
+              <p className="font-semibold text-sm text-gray-800 dark:text-white">
+                {selectedVehicle.merk} {selectedVehicle.jenis} ({selectedVehicle.tahun})
+              </p>
+              <p className="text-xs text-gray-600 dark:text-gray-400 mt-0.5">
+                {selectedVehicle.engine} • {selectedVehicle.drivetrain}
+              </p>
+            </div>
+            <button
+              onClick={() => setShowDetails(!showDetails)}
+              className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
+            >
+              {showDetails ? 'Sembunyikan' : 'Detail'}
+            </button>
+          </div>
+          
+          {showDetails && (
+            <div className="grid grid-cols-2 gap-2 text-xs text-gray-600 dark:text-gray-300 pt-2 border-t border-blue-200 dark:border-blue-800">
+              <div>⬆️ Ground: {selectedVehicle.ground_clearance_mm}mm</div>
+              <div>💪 Torsi: {selectedVehicle.torque_nm}Nm</div>
+              <div>⛽ Range: {selectedVehicle.range_km}km</div>
+              <div>🏋️ Berat: {selectedVehicle.weight_kg}kg</div>
+              <div>🌊 Wading: {selectedVehicle.wading_depth_mm}mm</div>
+              <div>📐 Approach: {selectedVehicle.approach_angle}°</div>
+              <div className="col-span-2 mt-1 text-gray-500 dark:text-gray-400 italic">
+                💡 {selectedVehicle.notes}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
