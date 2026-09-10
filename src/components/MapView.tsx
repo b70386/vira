@@ -1,14 +1,22 @@
 import { useEffect, useRef } from 'react';
 import L from 'leaflet';
+import { Waypoint } from '../types';
 
 interface MapViewProps {
   routeCoordinates: [number, number][]; // [lat, lng]
-  startLocation: { lat: number; lng: number; name: string } | null;
-  endLocation: { lat: number; lng: number; name: string } | null;
+  waypoints: Waypoint[];
   elevationData: { distance_km: number; elevation_m: number; gradient: number }[];
 }
 
-export default function MapView({ routeCoordinates, startLocation, endLocation, elevationData }: MapViewProps) {
+// Warna marker untuk setiap waypoint
+const MARKER_COLORS: Record<string, string> = {
+  A: '#22c55e', // green
+  B: '#3b82f6', // blue
+  C: '#a855f7', // purple
+  D: '#ef4444', // red
+};
+
+export default function MapView({ routeCoordinates, waypoints, elevationData }: MapViewProps) {
   const mapRef = useRef<L.Map | null>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const routeLayerRef = useRef<L.LayerGroup | null>(null);
@@ -86,38 +94,55 @@ export default function MapView({ routeCoordinates, startLocation, endLocation, 
       map.fitBounds(bounds, { padding: [30, 30] });
     }
 
-    // Tambah marker awal
-    if (startLocation) {
-      const startIcon = L.divIcon({
+    // Tambah marker untuk setiap waypoint
+    waypoints.forEach((wp) => {
+      const color = MARKER_COLORS[wp.label] || '#6b7280';
+      const isFirst = wp.label === 'A';
+      const isLast = wp.label === waypoints[waypoints.length - 1]?.label;
+      
+      let iconLabel = wp.label;
+      let iconEmoji = '';
+      if (isFirst) iconEmoji = '📍';
+      else if (isLast) iconEmoji = '🏁';
+      
+      const markerIcon = L.divIcon({
         className: 'custom-marker',
-        html: '<div style="width:32px;height:32px;background:#22c55e;border-radius:50%;border:3px solid white;box-shadow:0 2px 6px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;color:white;font-weight:bold;font-size:14px;">A</div>',
-        iconSize: [32, 32],
-        iconAnchor: [16, 16],
+        html: `<div style="
+          width:36px;
+          height:36px;
+          background:${color};
+          border-radius:50%;
+          border:3px solid white;
+          box-shadow:0 2px 8px rgba(0,0,0,0.3);
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          color:white;
+          font-weight:bold;
+          font-size:${isFirst || isLast ? '16px' : '14px'};
+        ">${iconEmoji || iconLabel}</div>`,
+        iconSize: [36, 36],
+        iconAnchor: [18, 18],
       });
-      L.marker([startLocation.lat, startLocation.lng], { icon: startIcon })
-        .bindPopup(`<b>🟢 Asal:</b><br>${startLocation.name}`)
-        .addTo(markersLayer);
-    }
 
-    // Tambah marker tujuan
-    if (endLocation) {
-      const endIcon = L.divIcon({
-        className: 'custom-marker',
-        html: '<div style="width:32px;height:32px;background:#ef4444;border-radius:50%;border:3px solid white;box-shadow:0 2px 6px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;color:white;font-weight:bold;font-size:14px;">B</div>',
-        iconSize: [32, 32],
-        iconAnchor: [16, 16],
-      });
-      L.marker([endLocation.lat, endLocation.lng], { icon: endIcon })
-        .bindPopup(`<b>🔴 Tujuan:</b><br>${endLocation.name}`)
+      const title = isFirst ? '🟢 Asal' : isLast ? '🔴 Tujuan Akhir' : `📌 ${wp.label}`;
+      const shortName = wp.name.split(',').slice(0, 3).join(',');
+      
+      L.marker([wp.lat, wp.lng], { icon: markerIcon })
+        .bindPopup(`<b>${title}:</b><br>${shortName}`)
         .addTo(markersLayer);
-    }
+    });
 
     // Tambah marker untuk segmen curam
     if (elevationData.length > 0 && routeCoordinates.length > 0) {
       const steepSegments = elevationData.filter(e => Math.abs(e.gradient) > 15);
       const maxDist = elevationData[elevationData.length - 1]?.distance_km || 1;
       
-      steepSegments.forEach((segment) => {
+      // Batasi jumlah marker warning agar tidak terlalu penuh
+      const maxWarnings = 10;
+      const step = Math.max(1, Math.floor(steepSegments.length / maxWarnings));
+      
+      steepSegments.filter((_, i) => i % step === 0).forEach((segment) => {
         const ratio = segment.distance_km / maxDist;
         const coordIdx = Math.min(Math.floor(ratio * routeCoordinates.length), routeCoordinates.length - 1);
         
@@ -134,7 +159,7 @@ export default function MapView({ routeCoordinates, startLocation, endLocation, 
         }
       });
     }
-  }, [routeCoordinates, startLocation, endLocation, elevationData]);
+  }, [routeCoordinates, waypoints, elevationData]);
 
   return (
     <div className="relative w-full h-full min-h-[400px] rounded-xl overflow-hidden shadow-lg border border-gray-200 dark:border-gray-700">
@@ -142,7 +167,7 @@ export default function MapView({ routeCoordinates, startLocation, endLocation, 
       
       {/* Legend */}
       <div className="absolute bottom-4 left-4 bg-white/90 dark:bg-gray-800/90 backdrop-blur-sm rounded-lg p-3 shadow-md text-xs z-[1000]">
-        <p className="font-semibold mb-1 text-gray-700 dark:text-gray-200">Legenda:</p>
+        <p className="font-semibold mb-1.5 text-gray-700 dark:text-gray-200">Legenda Rute:</p>
         <div className="flex items-center gap-2 mb-1">
           <div className="w-4 h-1 bg-green-500 rounded"></div>
           <span className="text-gray-600 dark:text-gray-300">Aman (&lt;10%)</span>
@@ -151,10 +176,23 @@ export default function MapView({ routeCoordinates, startLocation, endLocation, 
           <div className="w-4 h-1 bg-yellow-500 rounded"></div>
           <span className="text-gray-600 dark:text-gray-300">Perhatian (10-15%)</span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 mb-2">
           <div className="w-4 h-1 bg-red-500 rounded"></div>
           <span className="text-gray-600 dark:text-gray-300">Risiko (&gt;15%)</span>
         </div>
+        {waypoints.length > 0 && (
+          <>
+            <p className="font-semibold mb-1 text-gray-700 dark:text-gray-200 border-t border-gray-200 dark:border-gray-600 pt-1.5">Waypoints:</p>
+            {waypoints.map(wp => (
+              <div key={wp.label} className="flex items-center gap-2 mb-0.5">
+                <div className="w-3 h-3 rounded-full" style={{ backgroundColor: MARKER_COLORS[wp.label] }}></div>
+                <span className="text-gray-600 dark:text-gray-300">
+                  {wp.label}: {wp.name.split(',')[0]}
+                </span>
+              </div>
+            ))}
+          </>
+        )}
       </div>
     </div>
   );

@@ -7,6 +7,13 @@ export interface RoutePoint {
   distance?: number; // jarak dari titik awal dalam meter
 }
 
+export interface Waypoint {
+  lat: number;
+  lng: number;
+  name: string;
+  label: string; // "A", "B", "C", "D"
+}
+
 export interface RouteData {
   points: RoutePoint[];
   distance_km: number;

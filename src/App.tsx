@@ -7,12 +7,11 @@ import ElevationChart from './components/ElevationChart';
 import { Vehicle } from './data/vehicles';
 import { getRoute, getElevationData, analyzeRoute } from './utils/routing';
 import { analyzeFeasibility } from './utils/analysis';
-import { RouteAnalysis, FeasibilityResult, ElevationData } from './types';
+import { RouteAnalysis, FeasibilityResult, ElevationData, Waypoint } from './types';
 
 function App() {
-  // State untuk lokasi
-  const [startLocation, setStartLocation] = useState<{ lat: number; lng: number; name: string } | null>(null);
-  const [endLocation, setEndLocation] = useState<{ lat: number; lng: number; name: string } | null>(null);
+  // State untuk 4 waypoints (asal + 3 tujuan perantara)
+  const [waypoints, setWaypoints] = useState<(Waypoint | null)[]>([null, null, null, null]);
   
   // State untuk kendaraan
   const [selectedVehicle, setSelectedVehicle] = useState<Vehicle | null>(null);
@@ -30,10 +29,22 @@ function App() {
   const [loadingStep, setLoadingStep] = useState('');
   const [error, setError] = useState<string | null>(null);
 
+  // Handler untuk update waypoint
+  const handleWaypointChange = useCallback((index: number, location: Waypoint | null) => {
+    setWaypoints(prev => {
+      const updated = [...prev];
+      updated[index] = location;
+      return updated;
+    });
+  }, []);
+
   // Handler untuk analisis rute
   const handleAnalyze = useCallback(async () => {
-    if (!startLocation || !endLocation) {
-      setError('Silakan pilih lokasi asal dan tujuan terlebih dahulu.');
+    // Filter waypoints yang tidak null (minimal 2 titik)
+    const validWaypoints = waypoints.filter((w): w is Waypoint => w !== null);
+    
+    if (validWaypoints.length < 2) {
+      setError('Silakan isi minimal 2 lokasi (asal dan 1 tujuan).');
       return;
     }
     if (!selectedVehicle) {
@@ -49,12 +60,9 @@ function App() {
     setRouteCoordinates([]);
 
     try {
-      // Step 1: Dapatkan rute
+      // Step 1: Dapatkan rute multi-waypoint
       setLoadingStep('Mengambil data rute...');
-      const route = await getRoute(
-        startLocation.lat, startLocation.lng,
-        endLocation.lat, endLocation.lng
-      );
+      const route = await getRoute(validWaypoints);
       
       setDistanceKm(route.distance_km);
       setDurationMinutes(route.duration_minutes);
@@ -101,7 +109,11 @@ function App() {
       setIsLoading(false);
       setLoadingStep('');
     }
-  }, [startLocation, endLocation, selectedVehicle]);
+  }, [waypoints, selectedVehicle]);
+
+  // Validasi: minimal 2 waypoint terisi
+  const validWaypoints = waypoints.filter(w => w !== null);
+  const canAnalyze = validWaypoints.length >= 2 && selectedVehicle !== null;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800">
@@ -166,10 +178,11 @@ function App() {
           {/* Kolom Kiri - Input */}
           <div className="lg:col-span-1 space-y-6">
             <RouteInput
-              onStartChange={setStartLocation}
-              onEndChange={setEndLocation}
+              waypoints={waypoints}
+              onWaypointChange={handleWaypointChange}
               onSubmit={handleAnalyze}
               isLoading={isLoading}
+              canAnalyze={canAnalyze}
             />
             <VehicleSelector
               selectedVehicle={selectedVehicle}
@@ -183,8 +196,7 @@ function App() {
             <div className="h-[400px] lg:h-[450px]">
               <MapView
                 routeCoordinates={routeCoordinates}
-                startLocation={startLocation}
-                endLocation={endLocation}
+                waypoints={waypoints.filter((w): w is Waypoint => w !== null)}
                 elevationData={elevationData}
               />
             </div>
@@ -202,6 +214,7 @@ function App() {
                 vehicle={selectedVehicle}
                 distanceKm={distanceKm}
                 durationMinutes={durationMinutes}
+                waypoints={waypoints.filter((w): w is Waypoint => w !== null)}
               />
             )}
 
@@ -213,21 +226,25 @@ function App() {
                   Siap Menganalisis Rute
                 </h3>
                 <p className="text-gray-500 dark:text-gray-400 max-w-md mx-auto">
-                  Pilih lokasi asal & tujuan, pilih kendaraan, lalu klik "Analisis Rute" untuk melihat 
-                  apakah kendaraan Anda cocok untuk rute yang akan dilalui.
+                  Masukkan hingga 4 titik lokasi (asal + 3 tujuan perantara), pilih kendaraan, 
+                  lalu klik "Analisis Rute" untuk melihat kelayakan kendaraan Anda.
                 </p>
-                <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4 text-left max-w-lg mx-auto">
-                  <div className="flex items-start gap-2">
-                    <span className="text-blue-500 font-bold">1.</span>
-                    <span className="text-sm text-gray-600 dark:text-gray-300">Masukkan asal & tujuan</span>
+                <div className="mt-6 grid grid-cols-1 md:grid-cols-4 gap-3 text-left max-w-2xl mx-auto">
+                  <div className="flex items-start gap-2 bg-green-50 dark:bg-green-900/20 rounded-lg p-3">
+                    <span className="w-6 h-6 bg-green-500 text-white rounded-full flex items-center justify-center text-xs font-bold shrink-0">A</span>
+                    <span className="text-sm text-gray-600 dark:text-gray-300">Lokasi Asal</span>
                   </div>
-                  <div className="flex items-start gap-2">
-                    <span className="text-blue-500 font-bold">2.</span>
-                    <span className="text-sm text-gray-600 dark:text-gray-300">Pilih kendaraan Anda</span>
+                  <div className="flex items-start gap-2 bg-blue-50 dark:bg-blue-900/20 rounded-lg p-3">
+                    <span className="w-6 h-6 bg-blue-500 text-white rounded-full flex items-center justify-center text-xs font-bold shrink-0">B</span>
+                    <span className="text-sm text-gray-600 dark:text-gray-300">Tujuan 1</span>
                   </div>
-                  <div className="flex items-start gap-2">
-                    <span className="text-blue-500 font-bold">3.</span>
-                    <span className="text-sm text-gray-600 dark:text-gray-300">Lihat hasil analisis</span>
+                  <div className="flex items-start gap-2 bg-purple-50 dark:bg-purple-900/20 rounded-lg p-3">
+                    <span className="w-6 h-6 bg-purple-500 text-white rounded-full flex items-center justify-center text-xs font-bold shrink-0">C</span>
+                    <span className="text-sm text-gray-600 dark:text-gray-300">Tujuan 2</span>
+                  </div>
+                  <div className="flex items-start gap-2 bg-red-50 dark:bg-red-900/20 rounded-lg p-3">
+                    <span className="w-6 h-6 bg-red-500 text-white rounded-full flex items-center justify-center text-xs font-bold shrink-0">D</span>
+                    <span className="text-sm text-gray-600 dark:text-gray-300">Tujuan Akhir</span>
                   </div>
                 </div>
               </div>

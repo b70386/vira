@@ -7,9 +7,10 @@ interface AnalysisResultProps {
   vehicle: Vehicle | null;
   distanceKm: number;
   durationMinutes: number;
+  waypoints?: { lat: number; lng: number; name: string; label: string }[];
 }
 
-export default function AnalysisResult({ result, routeAnalysis, vehicle, distanceKm, durationMinutes }: AnalysisResultProps) {
+export default function AnalysisResult({ result, routeAnalysis, vehicle, distanceKm, durationMinutes, waypoints }: AnalysisResultProps) {
   if (!result || !routeAnalysis || !vehicle) return null;
 
   const getVerdictStyle = (verdict: string) => {
@@ -61,6 +62,26 @@ export default function AnalysisResult({ result, routeAnalysis, vehicle, distanc
       {/* Info Rute */}
       <div className="p-5 border-b border-gray-200 dark:border-gray-700">
         <h3 className="font-semibold text-gray-700 dark:text-gray-200 mb-3">📊 Data Rute</h3>
+        
+        {/* Daftar Waypoints */}
+        {waypoints && waypoints.length > 1 && (
+          <div className="mb-4 bg-gray-50 dark:bg-gray-700/50 rounded-lg p-3">
+            <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">Rute Perjalanan:</p>
+            <div className="flex items-center flex-wrap gap-1">
+              {waypoints.map((wp, idx) => (
+                <span key={wp.label} className="flex items-center gap-1">
+                  <span className="text-sm font-medium text-gray-700 dark:text-gray-200">
+                    {wp.name.split(',')[0]}
+                  </span>
+                  {idx < waypoints.length - 1 && (
+                    <span className="text-gray-400 mx-1">→</span>
+                  )}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+        
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-3 text-center">
             <div className="text-lg font-bold text-gray-800 dark:text-white">{distanceKm.toFixed(0)} km</div>

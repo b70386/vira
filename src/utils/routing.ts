@@ -28,9 +28,12 @@ export async function searchLocation(query: string): Promise<Array<{
 
 /**
  * Mendapatkan rute menggunakan OSRM (Open Source Routing Machine) - gratis tanpa API key
+ * Mendukung multi-waypoint (hingga 4 titik)
  */
-export async function getRoute(startLat: number, startLng: number, endLat: number, endLng: number): Promise<RouteData> {
-  const url = `https://router.project-osrm.org/route/v1/driving/${startLng},${startLat};${endLng},${endLat}?overview=full&geometries=geojson&steps=true`;
+export async function getRoute(waypoints: {lat: number; lng: number}[]): Promise<RouteData> {
+  // Format: lon1,lat1;lon2,lat2;lon3,lat3;lon4,lat4
+  const coordsStr = waypoints.map(w => `${w.lng},${w.lat}`).join(';');
+  const url = `https://router.project-osrm.org/route/v1/driving/${coordsStr}?overview=full&geometries=geojson&steps=true`;
   
   const response = await fetch(url);
   if (!response.ok) throw new Error('Gagal mendapatkan rute');
