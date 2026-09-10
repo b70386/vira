@@ -36,17 +36,40 @@ export default function RouteInput({ waypoints, onWaypointChange, onSubmit, isLo
   const [queries, setQueries] = useState<string[]>(['', '', '', '']);
   const [results, setResults] = useState<SearchItem[][]>([[], [], [], []]);
   const [showResults, setShowResults] = useState<boolean[]>([false, false, false, false]);
+  
+  // Ref untuk track timeout per index
   const timeoutRefs = useRef<(ReturnType<typeof setTimeout> | null)[]>([null, null, null, null]);
+  // Ref untuk suppress search setelah user memilih hasil (mencegah useEffect trigger search lagi)
+  const suppressSearchRef = useRef<boolean[]>([false, false, false, false]);
+  // Ref untuk track query terakhir yang di-search (mencegah search ulang untuk query yang sama)
+  const lastSearchedRef = useRef<string[]>(['', '', '', '']);
 
   // Debounce search untuk setiap waypoint
   useEffect(() => {
     queries.forEach((query, index) => {
+      // Skip jika sedang dalam mode suppress (user baru saja memilih hasil)
+      if (suppressSearchRef.current[index]) {
+        suppressSearchRef.current[index] = false;
+        return;
+      }
+
+      // Skip jika query sama dengan yang terakhir di-search (mencegah loop)
+      if (query === lastSearchedRef.current[index]) {
+        return;
+      }
+
       if (query.length < 3) {
         setResults(prev => {
           const updated = [...prev];
           updated[index] = [];
           return updated;
         });
+        setShowResults(prev => {
+          const updated = [...prev];
+          updated[index] = false;
+          return updated;
+        });
+        lastSearchedRef.current[index] = query;
         return;
       }
 
@@ -55,6 +78,7 @@ export default function RouteInput({ waypoints, onWaypointChange, onSubmit, isLo
       timeoutRefs.current[index] = setTimeout(async () => {
         try {
           const searchResults = await searchLocation(query);
+          // Pastikan query belum berubah saat menunggu response
           setResults(prev => {
             const updated = [...prev];
             updated[index] = searchResults;
@@ -62,9 +86,10 @@ export default function RouteInput({ waypoints, onWaypointChange, onSubmit, isLo
           });
           setShowResults(prev => {
             const updated = [...prev];
-            updated[index] = true;
+            updated[index] = searchResults.length > 0;
             return updated;
           });
+          lastSearchedRef.current[index] = query;
         } catch (error) {
           console.error('Error searching location:', error);
         }
@@ -80,6 +105,10 @@ export default function RouteInput({ waypoints, onWaypointChange, onSubmit, isLo
     const config = WAYPOINT_CONFIG[index];
     const shortName = result.display_name.split(',').slice(0, 2).join(', ');
     
+    // Set suppress flag SEBELUM mengubah queries (agar useEffect skip search berikutnya)
+    suppressSearchRef.current[index] = true;
+    lastSearchedRef.current[index] = shortName;
+    
     setQueries(prev => {
       const updated = [...prev];
       updated[index] = shortName;
@@ -93,21 +122,49 @@ export default function RouteInput({ waypoints, onWaypointChange, onSubmit, isLo
       label: config.label
     });
     
+    // Langsung tutup dropdown
     setShowResults(prev => {
       const updated = [...prev];
       updated[index] = false;
       return updated;
     });
+    
+    // Clear timeout yang mungkin masih berjalan
+    if (timeoutRefs.current[index]) {
+      clearTimeout(timeoutRefs.current[index]!);
+      timeoutRefs.current[index] = null;
+    }
   };
 
   const handleRemoveWaypoint = (index: number) => {
     if (index === 0 || index === 3) return; // Tidak bisa hapus asal dan tujuan akhir
+    suppressSearchRef.current[index] = true;
+    lastSearchedRef.current[index] = '';
     setQueries(prev => {
       const updated = [...prev];
       updated[index] = '';
       return updated;
     });
+    setShowResults(prev => {
+      const updated = [...prev];
+      updated[index] = false;
+      return updated;
+    });
     onWaypointChange(index, null);
+  };
+
+  const handleInputChange = (index: number, value: string) => {
+    setQueries(prev => {
+      const updated = [...prev];
+      updated[index] = value;
+      return updated;
+    });
+    // Reset suppress flag karena user mulai mengetik manual
+    suppressSearchRef.current[index] = false;
+    // Reset waypoint jika user mulai mengetik ulang
+    if (waypoints[index]) {
+      onWaypointChange(index, null);
+    }
   };
 
   return (
@@ -127,7 +184,7 @@ export default function RouteInput({ waypoints, onWaypointChange, onSubmit, isLo
           
           return (
             <div key={index} className="relative">
-              <div className={`flex items-center gap-2 mb-1`}>
+              <div className="flex items-center gap-2 mb-1">
                 <span className={`w-6 h-6 ${colors.marker} text-white rounded-full flex items-center justify-center text-xs font-bold shrink-0 shadow-sm`}>
                   {config.label}
                 </span>
@@ -149,25 +206,28 @@ export default function RouteInput({ waypoints, onWaypointChange, onSubmit, isLo
                   <input
                     type="text"
                     value={queries[index]}
-                    onChange={(e) => {
-                      const updated = [...queries];
-                      updated[index] = e.target.value;
-                      setQueries(updated);
-                      // Reset waypoint jika user mulai mengetik ulang
-                      if (waypoints[index]) {
-                        onWaypointChange(index, null);
+                    onChange={(e) => handleInputChange(index, e.target.value)}
+                    onFocus={() => {
+                      // Hanya tampilkan dropdown jika ada hasil dan belum dipilih
+                      if (results[index].length > 0 && !hasValue) {
+                        setShowResults(prev => {
+                          const updated = [...prev];
+                          updated[index] = true;
+                          return updated;
+                        });
                       }
                     }}
-                    onFocus={() => results[index].length > 0 && setShowResults(prev => {
-                      const updated = [...prev];
-                      updated[index] = true;
-                      return updated;
-                    })}
-                    onBlur={() => setTimeout(() => setShowResults(prev => {
-                      const updated = [...prev];
-                      updated[index] = false;
-                      return updated;
-                    }), 200)}
+                    onBlur={() => {
+                      // Tutup dropdown saat input kehilangan fokus
+                      // Delay kecil agar klik pada dropdown item sempat terproses
+                      setTimeout(() => {
+                        setShowResults(prev => {
+                          const updated = [...prev];
+                          updated[index] = false;
+                          return updated;
+                        });
+                      }, 150);
+                    }}
                     placeholder={config.placeholder}
                     className={`w-full px-4 py-2.5 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-800 dark:text-white placeholder-gray-400 text-sm transition-all ${
                       hasValue 
@@ -180,13 +240,20 @@ export default function RouteInput({ waypoints, onWaypointChange, onSubmit, isLo
                       ✓
                     </span>
                   )}
+                  {/* Dropdown hasil pencarian */}
                   {showResults[index] && results[index].length > 0 && (
                     <div className="absolute z-50 w-full mt-1 bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg shadow-lg max-h-48 overflow-y-auto">
                       {results[index].map((result) => (
                         <button
                           key={result.place_id}
+                          type="button"
+                          onMouseDown={(e) => {
+                            // preventDefault agar input tidak kehilangan focus
+                            // sehingga onBlur tidak terpicu sebelum onClick
+                            e.preventDefault();
+                          }}
                           onClick={() => handleSelect(index, result)}
-                          className="w-full text-left px-4 py-2 hover:bg-blue-50 dark:hover:bg-gray-600 text-sm text-gray-700 dark:text-gray-200 border-b border-gray-100 dark:border-gray-600 last:border-0"
+                          className="w-full text-left px-4 py-2 hover:bg-blue-50 dark:hover:bg-gray-600 text-sm text-gray-700 dark:text-gray-200 border-b border-gray-100 dark:border-gray-600 last:border-0 cursor-pointer"
                         >
                           {result.display_name}
                         </button>
@@ -199,7 +266,11 @@ export default function RouteInput({ waypoints, onWaypointChange, onSubmit, isLo
               {/* Connector line antar waypoint */}
               {index < 3 && (
                 <div className="flex justify-center py-1">
-                  <div className={`w-0.5 h-3 ${index < (waypoints.findIndex((w, i) => i > index && w === null) === -1 ? index + 1 : waypoints.findIndex((w, i) => i > index && w === null)) - 1 ? 'bg-gray-300 dark:bg-gray-600' : 'bg-gray-200 dark:bg-gray-700'}`}></div>
+                  <div className={`w-0.5 h-3 ${
+                    waypoints[index] !== null && waypoints[index + 1] !== null
+                      ? 'bg-gray-400 dark:bg-gray-500' 
+                      : 'bg-gray-200 dark:bg-gray-700'
+                  }`}></div>
                 </div>
               )}
             </div>
@@ -213,11 +284,15 @@ export default function RouteInput({ waypoints, onWaypointChange, onSubmit, isLo
         <div className="flex flex-wrap gap-1.5">
           <button
             onClick={() => {
+              // Set suppress untuk semua index agar tidak trigger search
+              suppressSearchRef.current = [true, true, true, true];
+              lastSearchedRef.current = ['Manado', 'Gorontalo', 'Palu', 'Makassar'];
               setQueries(['Manado', 'Gorontalo', 'Palu', 'Makassar']);
               onWaypointChange(0, { lat: 1.4748, lng: 124.8421, name: 'Manado, Sulawesi Utara, Indonesia', label: 'A' });
               onWaypointChange(1, { lat: 0.5435, lng: 123.0568, name: 'Gorontalo, Indonesia', label: 'B' });
               onWaypointChange(2, { lat: -0.8952, lng: 119.8586, name: 'Palu, Sulawesi Tengah, Indonesia', label: 'C' });
               onWaypointChange(3, { lat: -5.1477, lng: 119.4327, name: 'Makassar, Sulawesi Selatan, Indonesia', label: 'D' });
+              setShowResults([false, false, false, false]);
             }}
             className="text-xs px-2.5 py-1 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded-full hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors"
           >
@@ -225,11 +300,14 @@ export default function RouteInput({ waypoints, onWaypointChange, onSubmit, isLo
           </button>
           <button
             onClick={() => {
+              suppressSearchRef.current = [true, true, true, true];
+              lastSearchedRef.current = ['Jakarta', 'Bogor', 'Bandung', ''];
               setQueries(['Jakarta', 'Bogor', 'Bandung', '']);
               onWaypointChange(0, { lat: -6.2088, lng: 106.8456, name: 'Jakarta, Indonesia', label: 'A' });
               onWaypointChange(1, { lat: -6.5971, lng: 106.8060, name: 'Bogor, Jawa Barat, Indonesia', label: 'B' });
               onWaypointChange(2, { lat: -6.9175, lng: 107.6191, name: 'Bandung, Jawa Barat, Indonesia', label: 'C' });
               onWaypointChange(3, null);
+              setShowResults([false, false, false, false]);
             }}
             className="text-xs px-2.5 py-1 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded-full hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors"
           >
@@ -237,11 +315,14 @@ export default function RouteInput({ waypoints, onWaypointChange, onSubmit, isLo
           </button>
           <button
             onClick={() => {
+              suppressSearchRef.current = [true, true, true, true];
+              lastSearchedRef.current = ['Medan', 'Berastagi', 'Parapat', ''];
               setQueries(['Medan', 'Berastagi', 'Parapat', '']);
               onWaypointChange(0, { lat: 3.5952, lng: 98.6722, name: 'Medan, Sumatera Utara, Indonesia', label: 'A' });
               onWaypointChange(1, { lat: 3.2167, lng: 98.5167, name: 'Berastagi, Karo, Indonesia', label: 'B' });
               onWaypointChange(2, { lat: 2.6617, lng: 98.8850, name: 'Parapat, Sumatera Utara, Indonesia', label: 'C' });
               onWaypointChange(3, null);
+              setShowResults([false, false, false, false]);
             }}
             className="text-xs px-2.5 py-1 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded-full hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors"
           >
@@ -249,11 +330,14 @@ export default function RouteInput({ waypoints, onWaypointChange, onSubmit, isLo
           </button>
           <button
             onClick={() => {
+              suppressSearchRef.current = [true, true, true, true];
+              lastSearchedRef.current = ['Surabaya', 'Malang', 'Batu', ''];
               setQueries(['Surabaya', 'Malang', 'Batu', '']);
               onWaypointChange(0, { lat: -7.2575, lng: 112.7521, name: 'Surabaya, Jawa Timur, Indonesia', label: 'A' });
               onWaypointChange(1, { lat: -7.9786, lng: 112.6317, name: 'Malang, Jawa Timur, Indonesia', label: 'B' });
               onWaypointChange(2, { lat: -7.8696, lng: 112.5251, name: 'Batu, Jawa Timur, Indonesia', label: 'C' });
               onWaypointChange(3, null);
+              setShowResults([false, false, false, false]);
             }}
             className="text-xs px-2.5 py-1 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded-full hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors"
           >
