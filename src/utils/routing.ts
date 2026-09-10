@@ -1,253 +1,197 @@
-// Utility untuk pengambilan data rute, elevasi, dan POI
 import { RouteData, RouteAnalysis, ElevationData, POI, POIType } from '../types';
+import { API, ROUTING, EARTH_RADIUS } from './constants';
 
-// Cache untuk data elevasi
 const elevationCache = new Map<string, number>();
 
 /**
- * Mencari lokasi menggunakan Nominatim API (OpenStreetMap)
+ * Search locations by name using OpenStreetMap Nominatim API
  */
-export async function searchLocation(query: string): Promise<Array<{
-  place_id: number;
-  display_name: string;
-  lat: string;
-  lon: string;
-}>> {
-  const response = await fetch(
-    `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&countrycodes=id&limit=5`,
-    {
-      headers: {
-        'Accept': 'application/json',
-      }
-    }
-  );
-  
+export async function searchLocation(query: string) {
+  const params = new URLSearchParams({
+    ...API.NOMINATIM.params,
+    q: query,
+  });
+
+  const response = await fetch(`${API.NOMINATIM.base}?${params}`, {
+    headers: { Accept: 'application/json' },
+  });
+
   if (!response.ok) throw new Error('Gagal mencari lokasi');
   return response.json();
 }
 
 /**
- * Mendapatkan rute menggunakan OSRM (Open Source Routing Machine) - gratis tanpa API key
- * Mendukung multi-waypoint (hingga 4 titik)
+ * Get routing data between waypoints using OSRM
+ * Supports up to 4 waypoints for multi-stop routes
  */
-export async function getRoute(waypoints: {lat: number; lng: number}[]): Promise<RouteData> {
-  const coordsStr = waypoints.map(w => `${w.lng},${w.lat}`).join(';');
-  const url = `https://router.project-osrm.org/route/v1/driving/${coordsStr}?overview=full&geometries=geojson&steps=true`;
-  
+export async function getRoute(waypoints: { lat: number; lng: number }[]): Promise<RouteData> {
+  const coords = waypoints.map((w) => `${w.lng},${w.lat}`).join(';');
+  const params = new URLSearchParams(API.OSRM.params);
+  const url = `${API.OSRM.base}/${coords}?${params}`;
+
   const response = await fetch(url);
   if (!response.ok) throw new Error('Gagal mendapatkan rute');
-  
+
   const data = await response.json();
-  
-  if (!data.routes || data.routes.length === 0) {
-    throw new Error('Tidak ada rute yang ditemukan');
-  }
-  
+  if (!data.routes?.length) throw new Error('Tidak ada rute yang ditemukan');
+
   const route = data.routes[0];
-  const coordinates: [number, number][] = route.geometry.coordinates;
-  
-  // Konversi ke RoutePoint
-  const points = coordinates.map((coord: [number, number], index: number) => ({
-    lat: coord[1],
-    lng: coord[0],
-    distance: 0
+  const coords_list: [number, number][] = route.geometry.coordinates;
+
+  const points = coords_list.map(([lng, lat]) => ({
+    lat,
+    lng,
+    distance: 0,
   }));
-  
-  // Hitung jarak kumulatif
-  let totalDistance = 0;
+
+  // Calculate cumulative distance along route
+  let cumDist = 0;
   for (let i = 1; i < points.length; i++) {
-    const dist = haversineDistance(points[i-1].lat, points[i-1].lng, points[i].lat, points[i].lng);
-    totalDistance += dist;
-    points[i].distance = totalDistance;
+    cumDist += haversine(points[i - 1].lat, points[i - 1].lng, points[i].lat, points[i].lng);
+    points[i].distance = cumDist;
   }
-  
+
   return {
     points,
     distance_km: route.distance / 1000,
     duration_minutes: route.duration / 60,
-    geometry: coordinates
+    geometry: coords_list,
   };
 }
 
 /**
- * Mendapatkan data elevasi untuk titik-titik sepanjang rute
- * Menggunakan Open-Elevation API dengan sampling lebih rapat untuk akurasi tanjakan
+ * Fetch elevation data along route with smoothing and gradient calculation
+ * Uses caching and batch requests to minimize API calls
  */
-export async function getElevationData(points: {lat: number; lng: number; distance?: number}[]): Promise<ElevationData[]> {
-  // Sampling lebih rapat: setiap ~150m (bukan 500m) untuk akurasi tanjakan pendek
-  // Tapi batasi max 120 titik agar tidak overload API
-  const sampleRate = Math.max(1, Math.floor(points.length / 120));
-  const sampledPoints = points.filter((_, i) => i % sampleRate === 0 || i === points.length - 1);
-  
-  // Cek cache dulu
-  const uncachedPoints: {lat: number; lng: number; distance?: number; index: number}[] = [];
-  const results: (ElevationData | null)[] = new Array(sampledPoints.length).fill(null);
-  
-  sampledPoints.forEach((point, index) => {
-    const key = `${point.lat.toFixed(4)},${point.lng.toFixed(4)}`;
-    if (elevationCache.has(key)) {
-      results[index] = {
-        distance_km: 0,
-        elevation_m: elevationCache.get(key)!,
-        gradient: 0
-      };
+export async function getElevationData(
+  points: { lat: number; lng: number; distance?: number }[]
+): Promise<ElevationData[]> {
+  // Sample points: aim for ~150m intervals, max 120 points
+  const sampleRate = Math.max(1, Math.floor(points.length / API.ELEVATION.maxPoints));
+  const sampled = points.filter((_, i) => i % sampleRate === 0 || i === points.length - 1);
+
+  // Separate cached vs uncached
+  const uncached: { lat: number; lng: number; distance?: number; idx: number }[] = [];
+  const results: (ElevationData | null)[] = new Array(sampled.length).fill(null);
+
+  sampled.forEach((p, idx) => {
+    const key = `${p.lat.toFixed(4)},${p.lng.toFixed(4)}`;
+    const cached = elevationCache.get(key);
+
+    if (cached !== undefined) {
+      results[idx] = { distance_km: 0, elevation_m: cached, gradient: 0 };
     } else {
-      uncachedPoints.push({ ...point, index });
+      uncached.push({ ...p, idx });
     }
   });
-  
-  // Request elevasi untuk titik yang belum ada di cache
-  if (uncachedPoints.length > 0) {
-    const batchSize = 40;
-    for (let i = 0; i < uncachedPoints.length; i += batchSize) {
-      const batch = uncachedPoints.slice(i, i + batchSize);
-      const locations = batch.map(p => ({ latitude: p.lat, longitude: p.lng }));
-      
+
+  // Batch fetch from API
+  if (uncached.length > 0) {
+    for (let i = 0; i < uncached.length; i += API.ELEVATION.batchSize) {
+      const batch = uncached.slice(i, i + API.ELEVATION.batchSize);
+      const locations = batch.map((p) => ({ latitude: p.lat, longitude: p.lng }));
+
       try {
-        const response = await fetch('https://api.open-elevation.com/api/v1/lookup', {
+        const response = await fetch(API.ELEVATION.base, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ locations })
+          body: JSON.stringify({ locations }),
         });
-        
+
         if (response.ok) {
           const data = await response.json();
-          data.results.forEach((result: { latitude: number; longitude: number; elevation: number }, idx: number) => {
-            const key = `${batch[idx].lat.toFixed(4)},${batch[idx].lng.toFixed(4)}`;
-            elevationCache.set(key, result.elevation);
-            results[batch[idx].index] = {
-              distance_km: 0,
-              elevation_m: result.elevation,
-              gradient: 0
-            };
-          });
+          data.results?.forEach(
+            (
+              el: { latitude: number; longitude: number; elevation: number },
+              resultIdx: number
+            ) => {
+              const key = `${batch[resultIdx].lat.toFixed(4)},${batch[resultIdx].lng.toFixed(4)}`;
+              const elev = el.elevation;
+              elevationCache.set(key, elev);
+              results[batch[resultIdx].idx] = {
+                distance_km: 0,
+                elevation_m: elev,
+                gradient: 0,
+              };
+            }
+          );
         }
-      } catch (error) {
-        console.warn('Open-Elevation API gagal, menggunakan estimasi');
-        uncachedPoints.forEach((p) => {
-          const estimatedElevation = estimateElevation(p.lat, p.lng);
+      } catch (err) {
+        // Fallback: estimate from coordinates
+        batch.forEach((p) => {
+          const est = estimateElevation(p.lat, p.lng);
           const key = `${p.lat.toFixed(4)},${p.lng.toFixed(4)}`;
-          elevationCache.set(key, estimatedElevation);
-          results[p.index] = {
-            distance_km: 0,
-            elevation_m: estimatedElevation,
-            gradient: 0
-          };
+          elevationCache.set(key, est);
+          results[p.idx] = { distance_km: 0, elevation_m: est, gradient: 0 };
         });
       }
     }
   }
-  
-  // Hitung jarak dan gradient dengan smoothing
-  const elevationProfile: ElevationData[] = [];
-  let prevElevation = 0;
-  let prevDistance = 0;
-  
-  // Kumpulkan elevasi mentah dulu
-  const rawElevations: { distance_km: number; elevation_m: number }[] = [];
-  for (let i = 0; i < sampledPoints.length; i++) {
-    const elevation = results[i]?.elevation_m ?? 0;
-    const distance = sampledPoints[i].distance 
-      ? sampledPoints[i].distance! / 1000 
-      : calculateCumulativeDistance(sampledPoints, i);
-    rawElevations.push({ distance_km: distance, elevation_m: elevation });
-  }
-  
-  // Smoothing: gunakan moving average window 3 titik untuk mengurangi noise
-  const smoothedElevations = rawElevations.map((point, i) => {
-    if (i === 0 || i === rawElevations.length - 1) return point.elevation_m;
-    const prev = rawElevations[i - 1].elevation_m;
-    const next = rawElevations[i + 1].elevation_m;
-    return (prev + point.elevation_m + next) / 3;
+
+  // Build elevation profile with smoothing
+  const raw: { distance_km: number; elevation_m: number }[] = sampled.map((p, i) => ({
+    distance_km: p.distance ? p.distance / 1000 : cumulativeDist(sampled, i),
+    elevation_m: results[i]?.elevation_m ?? 0,
+  }));
+
+  // 3-point moving average to reduce noise
+  const smoothed = raw.map((pt, i) => {
+    if (i === 0 || i === raw.length - 1) return pt.elevation_m;
+    return (raw[i - 1].elevation_m + pt.elevation_m + raw[i + 1].elevation_m) / 3;
   });
-  
-  // Hitung gradient dengan window yang lebih besar (5 titik) untuk akurasi
-  for (let i = 0; i < rawElevations.length; i++) {
-    const elevation = smoothedElevations[i];
-    const distance = rawElevations[i].distance_km;
-    
-    // Hitung gradient menggunakan window 5 titik ke depan (jika tersedia)
-    let gradient = 0;
-    const windowSize = Math.min(5, rawElevations.length - 1 - i);
+
+  // Calculate gradients using 5-point window
+  const profile: ElevationData[] = [];
+  for (let i = 0; i < raw.length; i++) {
+    const windowSize = Math.min(5, raw.length - 1 - i);
+    let grad = 0;
+
     if (windowSize > 0) {
-      const futureElevation = smoothedElevations[i + windowSize];
-      const futureDistance = rawElevations[i + windowSize].distance_km;
-      const horizontalDist = futureDistance - distance;
-      if (horizontalDist > 0) {
-        gradient = ((futureElevation - elevation) / (horizontalDist * 1000)) * 100;
-      }
-    } else if (i > 0) {
-      // Fallback: gunakan jarak dari titik sebelumnya
-      const horizontalDist = distance - prevDistance;
-      if (horizontalDist > 0) {
-        gradient = ((elevation - prevElevation) / (horizontalDist * 1000)) * 100;
-      }
+      const dElev = smoothed[i + windowSize] - smoothed[i];
+      const dDist = (raw[i + windowSize].distance_km - raw[i].distance_km) * 1000;
+      grad = dDist > 0 ? (dElev / dDist) * 100 : 0;
     }
-    
-    // Filter outlier: gradient tidak mungkin > 30% untuk jalan umum di Indonesia
-    const clampedGradient = Math.abs(gradient) > 30 ? 0 : gradient;
-    
-    elevationProfile.push({
-      distance_km: distance,
-      elevation_m: elevation,
-      gradient: clampedGradient
+
+    // Clamp outliers
+    grad = Math.abs(grad) > ROUTING.gradientOutlierThreshold ? 0 : grad;
+
+    profile.push({
+      distance_km: raw[i].distance_km,
+      elevation_m: smoothed[i],
+      gradient: grad,
     });
-    
-    prevElevation = elevation;
-    prevDistance = distance;
   }
-  
-  return elevationProfile;
+
+  return profile;
 }
 
 /**
- * Estimasi elevasi berdasarkan koordinat (fallback jika API gagal)
+ * Estimate elevation from coordinates (fallback when API fails)
+ * Uses geographic region-based estimates for Indonesian terrain
  */
 function estimateElevation(lat: number, lng: number): number {
-  let elevation = 50;
-  
-  // Manado area: dataran rendah dengan bukit di sekitar
-  if (lat > 1.3 && lat < 1.6 && lng > 124.7 && lng < 125.0) {
-    elevation = 10 + Math.random() * 80;
-  }
-  // Limboto/Gorontalo: sekitar danau, dataran rendah
-  else if (lat > 0.4 && lat < 0.7 && lng > 122.8 && lng < 123.2) {
-    elevation = 5 + Math.random() * 50;
-  }
-  // Trans Sulawesi (pegunungan tengah)
-  else if (lat > -2 && lat < 2 && lng > 119.5 && lng < 124) {
-    elevation = 200 + Math.random() * 600;
-  }
-  // Jawa Tengah/Yogyakarta: pegunungan
-  else if (lat > -8.0 && lat < -7.0 && lng > 109 && lng < 112) {
-    elevation = 300 + Math.random() * 500;
-  }
-  // Sumatera Barat: Bukit Barisan
-  else if (lat > -2 && lat < 1 && lng > 99 && lng < 102) {
-    elevation = 400 + Math.random() * 800;
-  }
-  // Dataran rendah umum
-  else {
-    elevation = 10 + Math.random() * 100;
-  }
-  
-  return Math.round(elevation);
+  // Regional elevation estimates
+  if (lat > 1.3 && lat < 1.6 && lng > 124.7 && lng < 125.0) return 10 + Math.random() * 80; // Manado
+  if (lat > 0.4 && lat < 0.7 && lng > 122.8 && lng < 123.2) return 5 + Math.random() * 50; // Gorontalo
+  if (lat > -2 && lat < 2 && lng > 119.5 && lng < 124) return 200 + Math.random() * 600; // Sulawesi mountains
+  if (lat > -8.0 && lat < -7.0 && lng > 109 && lng < 112) return 300 + Math.random() * 500; // Central Java
+  if (lat > -2 && lat < 1 && lng > 99 && lng < 102) return 400 + Math.random() * 800; // Sumatera
+  return 10 + Math.random() * 100; // Lowlands (default)
 }
 
-function calculateCumulativeDistance(points: {lat: number; lng: number; distance?: number}[], upToIndex: number): number {
-  let distance = 0;
-  for (let i = 1; i <= upToIndex && i < points.length; i++) {
-    distance += haversineDistance(points[i-1].lat, points[i-1].lng, points[i].lat, points[i].lng);
+function cumulativeDist(points: { lat: number; lng: number; distance?: number }[], upTo: number): number {
+  let sum = 0;
+  for (let i = 1; i <= upTo && i < points.length; i++) {
+    sum += haversine(points[i - 1].lat, points[i - 1].lng, points[i].lat, points[i].lng);
   }
-  return distance / 1000;
+  return sum / 1000;
 }
 
 /**
- * Analisis rute berdasarkan data elevasi
- * Tidak menghitung river_crossings karena tidak akurat
+ * Analyze elevation profile to extract route characteristics
  */
-export function analyzeRoute(elevationProfile: ElevationData[]): RouteAnalysis {
-  if (elevationProfile.length === 0) {
+export function analyzeRoute(profile: ElevationData[]): RouteAnalysis {
+  if (profile.length === 0) {
     return {
       total_ascent_m: 0,
       total_descent_m: 0,
@@ -258,278 +202,171 @@ export function analyzeRoute(elevationProfile: ElevationData[]): RouteAnalysis {
       steep_segments: [],
       off_road_segments: 0,
       river_crossings: 0,
-      elevation_profile: []
+      elevation_profile: [],
     };
   }
-  
-  let totalAscent = 0;
-  let totalDescent = 0;
-  let maxElevation = -Infinity;
-  let minElevation = Infinity;
-  let maxGradient = 0;
-  let totalGradient = 0;
-  const steepSegments: { km: number; gradient: number }[] = [];
-  
-  for (let i = 0; i < elevationProfile.length; i++) {
-    const point = elevationProfile[i];
-    
-    if (point.elevation_m > maxElevation) maxElevation = point.elevation_m;
-    if (point.elevation_m < minElevation) minElevation = point.elevation_m;
-    
+
+  let ascent = 0, descent = 0, maxElev = -Infinity, minElev = Infinity, maxGrad = 0, sumGrad = 0;
+  const steep: { km: number; gradient: number }[] = [];
+
+  for (let i = 0; i < profile.length; i++) {
+    const curr = profile[i];
+    maxElev = Math.max(maxElev, curr.elevation_m);
+    minElev = Math.min(minElev, curr.elevation_m);
+
     if (i > 0) {
-      const prevPoint = elevationProfile[i - 1];
-      const elevationDiff = point.elevation_m - prevPoint.elevation_m;
-      
-      if (elevationDiff > 0) totalAscent += elevationDiff;
-      else totalDescent += Math.abs(elevationDiff);
-      
-      const absGradient = Math.abs(point.gradient);
-      if (absGradient > maxGradient) maxGradient = absGradient;
-      totalGradient += absGradient;
-      
-      if (absGradient > 8) {
-        steepSegments.push({ km: point.distance_km, gradient: point.gradient });
-      }
+      const prev = profile[i - 1];
+      const dElev = curr.elevation_m - prev.elevation_m;
+      if (dElev > 0) ascent += dElev;
+      else descent += Math.abs(dElev);
+
+      const absGrad = Math.abs(curr.gradient);
+      maxGrad = Math.max(maxGrad, absGrad);
+      sumGrad += absGrad;
+
+      if (absGrad > 8) steep.push({ km: curr.distance_km, gradient: curr.gradient });
     }
   }
-  
+
   return {
-    total_ascent_m: totalAscent,
-    total_descent_m: totalDescent,
-    max_elevation_m: maxElevation === -Infinity ? 0 : maxElevation,
-    min_elevation_m: minElevation === Infinity ? 0 : minElevation,
-    max_gradient: maxGradient,
-    avg_gradient: totalGradient / elevationProfile.length,
-    steep_segments: steepSegments,
-    off_road_segments: 0, // Tidak diestimasi lagi karena tidak akurat
-    river_crossings: 0,   // Tidak diestimasi lagi karena tidak akurat
-    elevation_profile: elevationProfile
+    total_ascent_m: ascent,
+    total_descent_m: descent,
+    max_elevation_m: maxElev === -Infinity ? 0 : maxElev,
+    min_elevation_m: minElev === Infinity ? 0 : minElev,
+    max_gradient: maxGrad,
+    avg_gradient: sumGrad / profile.length,
+    steep_segments: steep,
+    off_road_segments: 0,
+    river_crossings: 0,
+    elevation_profile: profile,
   };
 }
 
 /**
- * Query POI (SPBU, Indomaret, Alfamart) di sepanjang rute menggunakan Overpass API
- * Buffer 500m di sekitar rute
+ * Query POIs (gas stations, convenience stores) along route using Overpass API
+ * Searches within a 2km buffer around the route
  */
-export async function queryPOIsAlongRoute(
-  routeCoordinates: [number, number][] // [lat, lng]
-): Promise<POI[]> {
-  if (routeCoordinates.length === 0) return [];
-  
-  // Hitung bounding box dari rute
+export async function queryPOIsAlongRoute(routeCoords: [number, number][]): Promise<POI[]> {
+  if (routeCoords.length === 0) return [];
+
+  // Calculate bounding box
   let minLat = 90, maxLat = -90, minLng = 180, maxLng = -180;
-  for (const [lat, lng] of routeCoordinates) {
-    if (lat < minLat) minLat = lat;
-    if (lat > maxLat) maxLat = lat;
-    if (lng < minLng) minLng = lng;
-    if (lng > maxLng) maxLng = lng;
+  for (const [lat, lng] of routeCoords) {
+    minLat = Math.min(minLat, lat);
+    maxLat = Math.max(maxLat, lat);
+    minLng = Math.min(minLng, lng);
+    maxLng = Math.max(maxLng, lng);
   }
-  
-  // Tambah buffer sekitar 0.02 derajat (~2km) untuk menangkap POI di sekitar rute
-  const buffer = 0.02;
-  minLat -= buffer;
-  maxLat += buffer;
-  minLng -= buffer;
-  maxLng += buffer;
-  
-  // Query sederhana yang pasti bekerja - pisahkan menjadi 3 query terpisah
-  // Query 1: SPBU
-  const spbuQuery = `
-[out:json][timeout:25];
-node["amenity"="fuel"](${minLat},${minLng},${maxLat},${maxLng});
-out body;
-`;
 
-  // Query 2: Indomaret
-  const indomaretQuery = `
-[out:json][timeout:25];
-(
-  node["brand"="Indomaret"](${minLat},${minLng},${maxLat},${maxLng});
-  node["name"~"Indomaret",i](${minLat},${minLng},${maxLat},${maxLng});
-);
-out body;
-`;
+  const buf = ROUTING.poiBoundaryBuffer;
+  const bbox = { minLat: minLat - buf, maxLat: maxLat + buf, minLng: minLng - buf, maxLng: maxLng + buf };
 
-  // Query 3: Alfamart
-  const alfamartQuery = `
-[out:json][timeout:25];
-(
-  node["brand"="Alfamart"](${minLat},${minLng},${maxLat},${maxLng});
-  node["name"~"Alfamart",i](${minLat},${minLng},${maxLat},${maxLng});
-);
-out body;
-`;
-  
-  try {
-    // Jalankan 3 query terpisah untuk hasil yang lebih reliable
-    console.log('[POI Query] Bounding box:', { minLat, maxLat, minLng, maxLng });
-    
-    const [spbuResponse, indomaretResponse, alfamartResponse] = await Promise.all([
-      fetch('https://overpass-api.de/api/interpreter', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: `data=${encodeURIComponent(spbuQuery)}`
-      }),
-      fetch('https://overpass-api.de/api/interpreter', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: `data=${encodeURIComponent(indomaretQuery)}`
-      }),
-      fetch('https://overpass-api.de/api/interpreter', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: `data=${encodeURIComponent(alfamartQuery)}`
-      })
-    ]);
-    
-    // Gabungkan semua elements
-    let elements: any[] = [];
-    
-    if (spbuResponse.ok) {
-      const spbuData = await spbuResponse.json();
-      const spbuElements = spbuData.elements || [];
-      console.log(`[POI Query] SPBU found: ${spbuElements.length}`);
-      elements = elements.concat(spbuElements.map((el: any) => ({ ...el, _poiType: 'spbu' })));
-    } else {
-      console.warn('[POI Query] SPBU query failed:', spbuResponse.status);
+  // Overpass QL queries
+  const queries = {
+    spbu: `[out:json][timeout:${API.OVERPASS.timeout}];
+      node["amenity"="fuel"](${bbox.minLat},${bbox.minLng},${bbox.maxLat},${bbox.maxLng});
+      out body;`,
+    indomaret: `[out:json][timeout:${API.OVERPASS.timeout}];
+      (node["brand"="Indomaret"](${bbox.minLat},${bbox.minLng},${bbox.maxLat},${bbox.maxLng});
+       node["name"~"Indomaret",i](${bbox.minLat},${bbox.minLng},${bbox.maxLat},${bbox.maxLng}););
+      out body;`,
+    alfamart: `[out:json][timeout:${API.OVERPASS.timeout}];
+      (node["brand"="Alfamart"](${bbox.minLat},${bbox.minLng},${bbox.maxLat},${bbox.maxLng});
+       node["name"~"Alfamart",i](${bbox.minLat},${bbox.minLng},${bbox.maxLat},${bbox.maxLng};);
+      out body;`,
+  };
+
+  // Fetch all POI types in parallel
+  const fetchPOI = (query: string, type: POIType) =>
+    fetch(API.OVERPASS.base, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `data=${encodeURIComponent(query)}`,
+    })
+      .then((r) => (r.ok ? r.json() : { elements: [] }))
+      .then((d) => (d.elements || []).map((el: any) => ({ ...el, _type: type })))
+      .catch(() => []);
+
+  const [spbuData, indoData, alfaData] = await Promise.all([
+    fetchPOI(queries.spbu, 'spbu'),
+    fetchPOI(queries.indomaret, 'indomaret'),
+    fetchPOI(queries.alfamart, 'alfamart'),
+  ]);
+
+  // Merge and deduplicate
+  const all = [...spbuData, ...indoData, ...alfaData];
+  const seen = new Set<string>();
+  const pois: POI[] = [];
+
+  for (const el of all) {
+    if (!el.lat || !el.lon) continue;
+
+    const key = `${el.lat.toFixed(4)},${el.lon.toFixed(4)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    // Distance from route
+    let minDist = Infinity;
+    for (const [lat, lng] of routeCoords) {
+      const d = haversine(el.lat, el.lon, lat, lng);
+      minDist = Math.min(minDist, d);
     }
-    
-    if (indomaretResponse.ok) {
-      const indomaretData = await indomaretResponse.json();
-      const indomaretElements = indomaretData.elements || [];
-      console.log(`[POI Query] Indomaret found: ${indomaretElements.length}`);
-      elements = elements.concat(indomaretElements.map((el: any) => ({ ...el, _poiType: 'indomaret' })));
-    } else {
-      console.warn('[POI Query] Indomaret query failed:', indomaretResponse.status);
-    }
-    
-    if (alfamartResponse.ok) {
-      const alfamartData = await alfamartResponse.json();
-      const alfamartElements = alfamartData.elements || [];
-      console.log(`[POI Query] Alfamart found: ${alfamartElements.length}`);
-      elements = elements.concat(alfamartElements.map((el: any) => ({ ...el, _poiType: 'alfamart' })));
-    } else {
-      console.warn('[POI Query] Alfamart query failed:', alfamartResponse.status);
-    }
-    
-    console.log(`[POI Query] Total elements: ${elements.length}`);
-    
-    // Log beberapa contoh untuk debugging
-    if (elements.length > 0) {
-      console.log('[POI Query] Sample elements:', elements.slice(0, 3).map((el: any) => ({
-        id: el.id,
-        type: el.type,
-        tags: el.tags,
-        _poiType: el._poiType
-      })));
-    }
-    
-    // Konversi ke POI dan hitung jarak terdekat dari rute
-    const pois: POI[] = [];
-    const seen = new Set<string>();
-    
-    for (const el of elements) {
-      if (!el.lat || !el.lon) continue;
-      
-      // Dedup berdasarkan koordinat (hindari duplikasi)
-      const key = `${el.lat.toFixed(4)},${el.lon.toFixed(4)}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      
-      // Gunakan tipe yang sudah di-set dari query
-      let type: POIType = el._poiType || 'other';
-      let name = el.tags?.name || '';
-      let brand = el.tags?.brand || '';
-      let operator = el.tags?.operator || '';
-      
-      // Set nama default jika kosong
-      if (!name) {
-        if (type === 'spbu') name = brand || operator || 'SPBU';
-        else if (type === 'indomaret') name = 'Indomaret';
-        else if (type === 'alfamart') name = brand || 'Alfamart';
-      }
-      
-      // Hitung jarak terdekat dari rute
-      let minDistanceKm = Infinity;
-      for (const coord of routeCoordinates) {
-        const dist = haversineDistance(el.lat, el.lon, coord[0], coord[1]);
-        if (dist < minDistanceKm) minDistanceKm = dist;
-      }
-      
-      // Filter: hanya tampilkan POI yang dalam radius 1km dari rute
-      if (minDistanceKm > 1000) continue;
-      
-      // Hitung jarak dari titik awal rute (sepanjang rute)
-      const distanceFromStart = estimateDistanceAlongRoute(
-        el.lat, el.lon, routeCoordinates
-      );
-      
-      pois.push({
-        lat: el.lat,
-        lng: el.lon,
-        name,
-        type,
-        brand,
-        distance_from_route_m: minDistanceKm,
-        distance_from_start_km: distanceFromStart
-      });
-    }
-    
-    // Sort berdasarkan jarak dari start
-    pois.sort((a, b) => a.distance_from_start_km - b.distance_from_start_km);
-    
-    console.log(`[POI Query] Final POIs after filtering: ${pois.length}`);
-    console.log('[POI Query] Breakdown:', {
-      spbu: pois.filter(p => p.type === 'spbu').length,
-      indomaret: pois.filter(p => p.type === 'indomaret').length,
-      alfamart: pois.filter(p => p.type === 'alfamart').length
+
+    if (minDist > ROUTING.poiMaxDistance) continue;
+
+    // Distance along route
+    const distAlongRoute = findClosestRoutePos(el.lat, el.lon, routeCoords);
+
+    const name =
+      el.tags?.name ||
+      {
+        spbu: el.tags?.brand || el.tags?.operator || 'SPBU',
+        indomaret: 'Indomaret',
+        alfamart: el.tags?.brand || 'Alfamart',
+      }[el._type];
+
+    pois.push({
+      lat: el.lat,
+      lng: el.lon,
+      name,
+      type: el._type,
+      brand: el.tags?.brand || '',
+      distance_from_route_m: minDist,
+      distance_from_start_km: distAlongRoute,
     });
-    
-    return pois;
-  } catch (error) {
-    console.warn('Gagal query POI:', error);
-    return [];
   }
+
+  pois.sort((a, b) => a.distance_from_start_km - b.distance_from_start_km);
+  return pois;
 }
 
 /**
- * Estimasi jarak POI dari titik awal rute (proyeksi ke rute terdekat)
- * Return rasio 0-1 yang akan di-scale ke km actual di caller
+ * Find POI's position relative to route (0 = start, 1 = end)
  */
-function estimateDistanceAlongRoute(
-  poiLat: number,
-  poiLng: number,
-  routeCoordinates: [number, number][]
-): number {
-  let minDistance = Infinity;
+function findClosestRoutePos(lat: number, lng: number, routeCoords: [number, number][]): number {
+  let minDist = Infinity;
   let closestIdx = 0;
-  
-  for (let i = 0; i < routeCoordinates.length; i++) {
-    const dist = haversineDistance(poiLat, poiLng, routeCoordinates[i][0], routeCoordinates[i][1]);
-    if (dist < minDistance) {
-      minDistance = dist;
+
+  for (let i = 0; i < routeCoords.length; i++) {
+    const d = haversine(lat, lng, routeCoords[i][0], routeCoords[i][1]);
+    if (d < minDist) {
+      minDist = d;
       closestIdx = i;
     }
   }
-  
-  // Return rasio posisi POI di sepanjang rute (0 = start, 1 = end)
-  return closestIdx / Math.max(1, routeCoordinates.length - 1);
+
+  return closestIdx / Math.max(1, routeCoords.length - 1);
 }
 
 /**
- * Haversine formula untuk menghitung jarak antara 2 titik koordinat (dalam meter)
+ * Haversine distance formula (returns meters)
  */
-function haversineDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const R = 6371000;
+function haversine(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
   const dLat = toRad(lat2 - lat1);
   const dLon = toRad(lon2 - lon1);
-  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
-    Math.sin(dLon / 2) * Math.sin(dLon / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return R * c;
-}
-
-function toRad(deg: number): number {
-  return deg * (Math.PI / 180);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return EARTH_RADIUS * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }

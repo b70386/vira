@@ -1,172 +1,312 @@
-// Logika analisis kelayakan kendaraan untuk rute tertentu
 import { Vehicle } from '../data/vehicles';
 import { RouteAnalysis, FeasibilityResult, POI } from '../types';
 
 /**
- * Analisis kelayakan kendaraan untuk rute tertentu
- * Membandingkan spesifikasi kendaraan dengan kondisi medan rute
+ * Feasibility scoring thresholds and penalties
  */
-export function analyzeFeasibility(vehicle: Vehicle, route: RouteAnalysis, pois: POI[] = []): FeasibilityResult {
-  const warnings: string[] = [];
-  const criticals: string[] = [];
-  const positives: string[] = [];
-  const recommendations: string[] = [];
-  let score = 10;
+const SCORE = {
+  base: 10,
+  clearance: { critical: -3, warn: -1 },
+  drivetrain: { critical: -4, warn: -2 },
+  range: -1,
+  torque: { critical: -2, warn: -1 },
+  riskLevel: { veryHigh: -3, high: -2 },
+  breakover: -1,
+  weight: -1,
+  spbu: { critical: -2, warn: -1 },
+};
 
-  // 1. Ground clearance vs max gradient
-  if (vehicle.ground_clearance_mm < 160 && route.max_gradient > 15) {
-    criticals.push(`Ground clearance ${vehicle.ground_clearance_mm}mm terlalu rendah untuk tanjakan ${route.max_gradient.toFixed(1)}%`);
-    score -= 3;
-  } else if (vehicle.ground_clearance_mm < 180 && route.max_gradient > 12) {
-    warnings.push(`Ground clearance ${vehicle.ground_clearance_mm}mm perlu perhatian untuk tanjakan ${route.max_gradient.toFixed(1)}%`);
-    score -= 1;
-  } else if (vehicle.ground_clearance_mm >= 200) {
-    positives.push(`Ground clearance ${vehicle.ground_clearance_mm}mm cukup untuk medan rute ini`);
-  }
+const THRESHOLDS = {
+  clearance: { critical: 160, warn: 180, good: 200 },
+  gradient: { crit: 20, warn: 15, alert: 12 },
+  torque: { crit: 250, warn: 300, good: 350 },
+  weight: { heavy: 2300, steepGrad: 18 },
+  spbuGap: 0.7, // % of vehicle range
+  breakover: 18,
+  ascent: 2000,
+  steepSegments: 3,
+  fuelPrice: 13500, // Rp per liter (diesel)
+};
 
-  // 2. Drivetrain vs off-road segments
-  const is2WD = vehicle.drivetrain.includes("RWD") || vehicle.drivetrain.includes("FWD");
-  if (is2WD && route.off_road_segments > 0) {
-    criticals.push(`Kendaraan ${vehicle.drivetrain} tidak cocok untuk ${route.off_road_segments} segmen off-road`);
-    score -= 4;
-  } else if (is2WD && route.max_gradient > 15) {
-    warnings.push(`Kendaraan ${vehicle.drivetrain} akan kesulitan di tanjakan curam >15%`);
-    score -= 2;
-  } else if (!is2WD) {
-    positives.push(`${vehicle.drivetrain} tersedia untuk menangani medan berat`);
-  }
+interface ScoringContext {
+  score: number;
+  warnings: string[];
+  criticals: string[];
+  positives: string[];
+  recommendations: string[];
+}
 
-  // 3. Range vs jarak rute
-  const distanceKm = route.elevation_profile.length > 0 
-    ? route.elevation_profile[route.elevation_profile.length - 1].distance_km 
-    : 0;
-  
-  if (distanceKm > 0) {
-    if (vehicle.range_km < distanceKm * 1.2) {
-      const stops = Math.ceil(distanceKm / (vehicle.range_km * 0.8));
-      warnings.push(`Range ${vehicle.range_km}km memerlukan ${stops}x isi bensin (jarak rute ~${distanceKm.toFixed(0)}km)`);
-      score -= 1;
-      recommendations.push(`Pastikan isi penuh di setiap SPBU yang dilewati`);
-    } else {
-      positives.push(`Range ${vehicle.range_km}km cukup untuk jarak rute ~${distanceKm.toFixed(0)}km`);
-    }
-  }
-
-  // 4. Torsi vs gradient
-  if (vehicle.torque_nm < 250 && route.max_gradient > 20) {
-    criticals.push(`Torsi ${vehicle.torque_nm}Nm kurang ideal untuk tanjakan ${route.max_gradient.toFixed(1)}%`);
-    score -= 2;
-  } else if (vehicle.torque_nm < 300 && route.max_gradient > 15) {
-    warnings.push(`Torsi ${vehicle.torque_nm}Nm perlu perhatian untuk tanjakan ${route.max_gradient.toFixed(1)}%`);
-    score -= 1;
-  } else if (vehicle.torque_nm >= 350) {
-    positives.push(`Torsi ${vehicle.torque_nm}Nm memadai untuk tanjakan terjal`);
-  }
-
-  // 5. Wading depth - tidak lagi digunakan karena estimasi sungai tidak akurat
-  // Mayoritas rute di Indonesia sudah memiliki jembatan
-  // Wading depth hanya relevan untuk rute off-road spesifik yang tidak terdeteksi dari data rute
-
-  // 6. Risk level kendaraan
-  if (vehicle.risk_level === "Very High") {
-    criticals.push(`Risk level "Very High" — kendaraan ini sangat berisiko untuk perjalanan jauh`);
-    score -= 3;
-    recommendations.push(`Siapkan dana cadangan minimal Rp 50-100 juta untuk perbaikan darurat`);
-  } else if (vehicle.risk_level === "High") {
-    warnings.push(`Risk level "High" — kendaraan memerlukan persiapan ekstra dan dana cadangan`);
-    score -= 2;
-    recommendations.push(`Siapkan dana cadangan Rp 30-50 juta`);
-  } else if (vehicle.risk_level === "Low") {
-    positives.push(`Risk level "Low" — kendaraan andal untuk perjalanan jauh`);
-  }
-
-  // 7. Breakover angle untuk jalan bergelombang
-  if (route.max_gradient > 20 && vehicle.breakover_angle < 18) {
-    warnings.push(`Breakover angle ${vehicle.breakover_angle}° berisiko tersangkut di puncak tanjakan`);
-    score -= 1;
-  }
-
-  // 8. Berat kendaraan vs tanjakan
-  if (vehicle.weight_kg > 2300 && route.max_gradient > 18) {
-    warnings.push(`Berat ${vehicle.weight_kg}kg bisa menyulitkan di tanjakan ${route.max_gradient.toFixed(1)}% (risiko selip/rem blong)`);
-    score -= 1;
-    recommendations.push(`Gunakan gigi rendah saat turunan, manfaatkan engine brake`);
-  }
-
-  // Rekomendasi umum
-  if (route.total_ascent_m > 2000) {
-    recommendations.push(`Total pendakian ${route.total_ascent_m.toFixed(0)}m — pastikan rem dalam kondisi prima`);
-  }
-  
-  if (route.steep_segments.length > 3) {
-    recommendations.push(`Terdapat ${route.steep_segments.length} segmen tanjakan curam — jaga jarak aman`);
-  }
-
-  if (vehicle.tire_type === "All-Terrain") {
-    positives.push(`Ban All-Terrain cocok untuk kondisi jalan bervariasi`);
-  }
-
-  recommendations.push(`Bawa ban serep, dongkrak, dan peralatan darurat`);
-  recommendations.push(`Pastikan kondisi fisik pengemudi prima untuk perjalanan jauh`);
-
-  // 9. Analisis ketersediaan SPBU di sepanjang rute
-  if (distanceKm > 0 && pois.length > 0) {
-    const spbuList = pois.filter(p => p.type === 'spbu');
-    
-    if (spbuList.length === 0) {
-      criticals.push(`Tidak ada SPBU terdeteksi di sepanjang rute (${distanceKm.toFixed(0)}km) — sangat berisiko!`);
-      score -= 2;
-      recommendations.push(`WAJIB isi penuh sebelum berangkat dan bawa jerigen cadangan`);
-    } else {
-      // Cek jarak antar SPBU
-      const spbuDistances = spbuList.map(s => s.distance_from_start_km).sort((a, b) => a - b);
-      let maxGap = 0;
-      let maxGapStart = 0;
-      
-      for (let i = 1; i < spbuDistances.length; i++) {
-        const gap = spbuDistances[i] - spbuDistances[i - 1];
-        if (gap > maxGap) {
-          maxGap = gap;
-          maxGapStart = spbuDistances[i - 1];
-        }
-      }
-      
-      // Cek gap dari start ke SPBU pertama
-      if (spbuDistances[0] > maxGap) {
-        maxGap = spbuDistances[0];
-        maxGapStart = 0;
-      }
-      
-      // Cek gap dari SPBU terakhir ke end
-      const lastGap = distanceKm - spbuDistances[spbuDistances.length - 1];
-      if (lastGap > maxGap) {
-        maxGap = lastGap;
-        maxGapStart = spbuDistances[spbuDistances.length - 1];
-      }
-      
-      if (maxGap > vehicle.range_km * 0.7) {
-        warnings.push(`Jarak terjauh antar SPBU: ${maxGap.toFixed(0)}km (KM ${maxGapStart.toFixed(0)}-${(maxGapStart + maxGap).toFixed(0)}) — melebihi 70% range kendaraan`);
-        score -= 1;
-        recommendations.push(`Isi penuh tangki di SPBU KM ${maxGapStart.toFixed(0)} dan pertimbangkan bawa jerigen cadangan`);
-      } else {
-        positives.push(`SPBU tersedia cukup merata — jarak terjauh ${maxGap.toFixed(0)}km`);
-      }
-    }
-  }
-
-  // Hitung estimasi biaya BBM
-  const fuelNeeded = distanceKm / vehicle.fuel_consumption_km_per_l;
-  const fuelCost = fuelNeeded * 13500; // harga solar ~Rp 13.500/liter
-  const fuelStops = distanceKm > 0 ? Math.ceil(distanceKm / (vehicle.range_km * 0.8)) - 1 : 0;
-
-  return {
-    score: Math.max(1, Math.min(10, score)),
-    warnings,
-    criticals,
-    positives,
-    recommendations: [...new Set(recommendations)], // hapus duplikat
-    verdict: score >= 8 ? "COCOK" : score >= 5 ? "PERHATIAN" : "TIDAK COCOK",
-    estimated_fuel_cost: Math.round(fuelCost),
-    estimated_fuel_stops: Math.max(0, fuelStops)
+/**
+ * Evaluate vehicle feasibility for a given route
+ */
+export function analyzeFeasibility(
+  vehicle: Vehicle,
+  route: RouteAnalysis,
+  pois: POI[] = []
+): FeasibilityResult {
+  const ctx: ScoringContext = {
+    score: SCORE.base,
+    warnings: [],
+    criticals: [],
+    positives: [],
+    recommendations: [],
   };
+
+  const distance = route.elevation_profile.length > 0
+    ? route.elevation_profile[route.elevation_profile.length - 1].distance_km
+    : 0;
+
+  // Evaluate each dimension
+  evalClearance(ctx, vehicle, route);
+  evalDrivetrain(ctx, vehicle, route);
+  evalRange(ctx, vehicle, distance);
+  evalTorque(ctx, vehicle, route);
+  evalRiskLevel(ctx, vehicle);
+  evalBreakover(ctx, vehicle, route);
+  evalWeight(ctx, vehicle, route);
+  evalRouteConditions(ctx, route);
+  evalSPBU(ctx, vehicle, route, pois);
+  evalFuel(ctx, vehicle, distance);
+
+  // Deduplicate recommendations and clamp score
+  return {
+    score: Math.max(1, Math.min(10, ctx.score)),
+    warnings: ctx.warnings,
+    criticals: ctx.criticals,
+    positives: ctx.positives,
+    recommendations: [...new Set(ctx.recommendations)],
+    verdict:
+      ctx.score >= 8 ? 'COCOK' : ctx.score >= 5 ? 'PERHATIAN' : 'TIDAK COCOK',
+    estimated_fuel_cost: Math.round(
+      (distance / vehicle.fuel_consumption_km_per_l) * THRESHOLDS.fuelPrice
+    ),
+    estimated_fuel_stops: Math.max(
+      0,
+      distance > 0 ? Math.ceil(distance / (vehicle.range_km * 0.8)) - 1 : 0
+    ),
+  };
+}
+
+function evalClearance(ctx: ScoringContext, vehicle: Vehicle, route: RouteAnalysis) {
+  const { ground_clearance_mm } = vehicle;
+  const { max_gradient } = route;
+
+  if (ground_clearance_mm < THRESHOLDS.clearance.critical && max_gradient > THRESHOLDS.gradient.warn) {
+    ctx.criticals.push(
+      `Ground clearance ${ground_clearance_mm}mm terlalu rendah untuk tanjakan ${max_gradient.toFixed(
+        1
+      )}%`
+    );
+    ctx.score += SCORE.clearance.critical;
+  } else if (
+    ground_clearance_mm < THRESHOLDS.clearance.warn &&
+    max_gradient > THRESHOLDS.gradient.alert
+  ) {
+    ctx.warnings.push(
+      `Ground clearance ${ground_clearance_mm}mm perlu perhatian untuk tanjakan ${max_gradient.toFixed(
+        1
+      )}%`
+    );
+    ctx.score += SCORE.clearance.warn;
+  } else if (ground_clearance_mm >= THRESHOLDS.clearance.good) {
+    ctx.positives.push(
+      `Ground clearance ${ground_clearance_mm}mm cukup untuk medan rute ini`
+    );
+  }
+}
+
+function evalDrivetrain(ctx: ScoringContext, vehicle: Vehicle, route: RouteAnalysis) {
+  const is2WD = vehicle.drivetrain.includes('RWD') || vehicle.drivetrain.includes('FWD');
+
+  if (is2WD && route.off_road_segments > 0) {
+    ctx.criticals.push(
+      `Kendaraan ${vehicle.drivetrain} tidak cocok untuk ${route.off_road_segments} segmen off-road`
+    );
+    ctx.score += SCORE.drivetrain.critical;
+  } else if (is2WD && route.max_gradient > THRESHOLDS.gradient.warn) {
+    ctx.warnings.push(
+      `Kendaraan ${vehicle.drivetrain} akan kesulitan di tanjakan curam >15%`
+    );
+    ctx.score += SCORE.drivetrain.warn;
+  } else if (!is2WD) {
+    ctx.positives.push(
+      `${vehicle.drivetrain} tersedia untuk menangani medan berat`
+    );
+  }
+}
+
+function evalRange(ctx: ScoringContext, vehicle: Vehicle, distance: number) {
+  if (distance <= 0) return;
+
+  if (vehicle.range_km < distance * 1.2) {
+    const stops = Math.ceil(distance / (vehicle.range_km * 0.8));
+    ctx.warnings.push(
+      `Range ${vehicle.range_km}km memerlukan ${stops}x isi bensin (jarak rute ~${distance.toFixed(
+        0
+      )}km)`
+    );
+    ctx.score += SCORE.range;
+    ctx.recommendations.push('Pastikan isi penuh di setiap SPBU yang dilewati');
+  } else {
+    ctx.positives.push(
+      `Range ${vehicle.range_km}km cukup untuk jarak rute ~${distance.toFixed(0)}km`
+    );
+  }
+}
+
+function evalTorque(ctx: ScoringContext, vehicle: Vehicle, route: RouteAnalysis) {
+  const { torque_nm } = vehicle;
+  const { max_gradient } = route;
+
+  if (torque_nm < THRESHOLDS.torque.crit && max_gradient > THRESHOLDS.gradient.crit) {
+    ctx.criticals.push(
+      `Torsi ${torque_nm}Nm kurang ideal untuk tanjakan ${max_gradient.toFixed(1)}%`
+    );
+    ctx.score += SCORE.torque.critical;
+  } else if (torque_nm < THRESHOLDS.torque.warn && max_gradient > THRESHOLDS.gradient.warn) {
+    ctx.warnings.push(
+      `Torsi ${torque_nm}Nm perlu perhatian untuk tanjakan ${max_gradient.toFixed(1)}%`
+    );
+    ctx.score += SCORE.torque.warn;
+  } else if (torque_nm >= THRESHOLDS.torque.good) {
+    ctx.positives.push(`Torsi ${torque_nm}Nm memadai untuk tanjakan terjal`);
+  }
+}
+
+function evalRiskLevel(ctx: ScoringContext, vehicle: Vehicle) {
+  if (vehicle.risk_level === 'Very High') {
+    ctx.criticals.push(
+      'Risk level "Very High" — kendaraan ini sangat berisiko untuk perjalanan jauh'
+    );
+    ctx.score += SCORE.riskLevel.veryHigh;
+    ctx.recommendations.push(
+      'Siapkan dana cadangan minimal Rp 50-100 juta untuk perbaikan darurat'
+    );
+  } else if (vehicle.risk_level === 'High') {
+    ctx.warnings.push(
+      'Risk level "High" — kendaraan memerlukan persiapan ekstra dan dana cadangan'
+    );
+    ctx.score += SCORE.riskLevel.high;
+    ctx.recommendations.push('Siapkan dana cadangan Rp 30-50 juta');
+  } else if (vehicle.risk_level === 'Low') {
+    ctx.positives.push(
+      'Risk level "Low" — kendaraan andal untuk perjalanan jauh'
+    );
+  }
+}
+
+function evalBreakover(ctx: ScoringContext, vehicle: Vehicle, route: RouteAnalysis) {
+  if (
+    route.max_gradient > THRESHOLDS.gradient.crit &&
+    vehicle.breakover_angle < THRESHOLDS.breakover
+  ) {
+    ctx.warnings.push(
+      `Breakover angle ${vehicle.breakover_angle}° berisiko tersangkut di puncak tanjakan`
+    );
+    ctx.score += SCORE.breakover;
+  }
+}
+
+function evalWeight(ctx: ScoringContext, vehicle: Vehicle, route: RouteAnalysis) {
+  if (
+    vehicle.weight_kg > THRESHOLDS.weight.heavy &&
+    route.max_gradient > THRESHOLDS.weight.steepGrad
+  ) {
+    ctx.warnings.push(
+      `Berat ${vehicle.weight_kg}kg bisa menyulitkan di tanjakan ${route.max_gradient.toFixed(
+        1
+      )}% (risiko selip/rem blong)`
+    );
+    ctx.score += SCORE.weight;
+    ctx.recommendations.push(
+      'Gunakan gigi rendah saat turunan, manfaatkan engine brake'
+    );
+  }
+}
+
+function evalRouteConditions(ctx: ScoringContext, route: RouteAnalysis) {
+  if (route.total_ascent_m > THRESHOLDS.ascent) {
+    ctx.recommendations.push(
+      `Total pendakian ${route.total_ascent_m.toFixed(0)}m — pastikan rem dalam kondisi prima`
+    );
+  }
+
+  if (route.steep_segments.length > THRESHOLDS.steepSegments) {
+    ctx.recommendations.push(
+      `Terdapat ${route.steep_segments.length} segmen tanjakan curam — jaga jarak aman`
+    );
+  }
+}
+
+function evalSPBU(
+  ctx: ScoringContext,
+  vehicle: Vehicle,
+  route: RouteAnalysis,
+  pois: POI[]
+) {
+  const distance = route.elevation_profile.length > 0
+    ? route.elevation_profile[route.elevation_profile.length - 1].distance_km
+    : 0;
+
+  if (distance <= 0 || pois.length === 0) return;
+
+  const spbuList = pois.filter((p) => p.type === 'spbu');
+
+  if (spbuList.length === 0) {
+    ctx.criticals.push(
+      `Tidak ada SPBU terdeteksi di sepanjang rute (${distance.toFixed(
+        0
+      )}km) — sangat berisiko!`
+    );
+    ctx.score += SCORE.spbu.critical;
+    ctx.recommendations.push(
+      'WAJIB isi penuh sebelum berangkat dan bawa jerigen cadangan'
+    );
+    return;
+  }
+
+  // Find largest gap between gas stations
+  const dist = spbuList.map((s) => s.distance_from_start_km).sort((a, b) => a - b);
+  let maxGap = dist[0]; // Gap from start
+  let gapStart = 0;
+
+  for (let i = 1; i < dist.length; i++) {
+    const gap = dist[i] - dist[i - 1];
+    if (gap > maxGap) {
+      maxGap = gap;
+      gapStart = dist[i - 1];
+    }
+  }
+
+  // Gap from last station to end
+  const lastGap = distance - dist[dist.length - 1];
+  if (lastGap > maxGap) {
+    maxGap = lastGap;
+    gapStart = dist[dist.length - 1];
+  }
+
+  if (maxGap > vehicle.range_km * THRESHOLDS.spbuGap) {
+    ctx.warnings.push(
+      `Jarak terjauh antar SPBU: ${maxGap.toFixed(0)}km (KM ${gapStart.toFixed(
+        0
+      )}-${(gapStart + maxGap).toFixed(0)}) — melebihi 70% range kendaraan`
+    );
+    ctx.score += SCORE.spbu.warn;
+    ctx.recommendations.push(
+      `Isi penuh tangki di SPBU KM ${gapStart.toFixed(
+        0
+      )} dan pertimbangkan bawa jerigen cadangan`
+    );
+  } else {
+    ctx.positives.push(`SPBU tersedia cukup merata — jarak terjauh ${maxGap.toFixed(0)}km`);
+  }
+}
+
+function evalFuel(ctx: ScoringContext, vehicle: Vehicle, distance: number) {
+  if (distance > 0) {
+    ctx.recommendations.push('Bawa ban serep, dongkrak, dan peralatan darurat');
+    ctx.recommendations.push(
+      'Pastikan kondisi fisik pengemudi prima untuk perjalanan jauh'
+    );
+  }
 }
