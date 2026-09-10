@@ -1,4 +1,4 @@
-# 🗻 Rute Realistis - Vehicle Route Feasibility Simulator
+# 🗻 Vira - Vehicle Route Analysis Simulator
 
 Aplikasi web untuk mensimulasikan kelayakan kendaraan pada rute tertentu di Indonesia. Bantu tentukan apakah mobil Anda cocok untuk rute yang akan dilalui berdasarkan spesifikasi kendaraan dan kondisi medan.
 
@@ -121,10 +121,10 @@ Aplikasi web untuk mensimulasikan kelayakan kendaraan pada rute tertentu di Indo
 ### Contoh Skenario Penggunaan
 
 **Input:**
-- Asal: Manado
-- Tujuan 1: Gorontalo
-- Tujuan 2: Palu
-- Tujuan Akhir: Makassar
+- Asal: Jakarta
+- Tujuan 1: Bogor
+- Tujuan 2: Sukabumi
+- Tujuan Akhir: Bandung
 - Kendaraan: Toyota Fortuner 4x4 2017
 - Kondisi Khusus: "kampas rem sudah tipis, AC tidak dingin"
 
@@ -231,7 +231,7 @@ Usage: Query SPBU, Indomaret, Alfamart
 
 ```bash
 # Clone repository
-git clone https://github.com/YOUR_USERNAME/rute-realistis.git
+git clone https://github.com/b70386/vira.git
 cd rute-realistis
 
 # Install dependencies
