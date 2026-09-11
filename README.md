@@ -232,7 +232,7 @@ Usage: Query SPBU, Indomaret, Alfamart
 ```bash
 # Clone repository
 git clone https://github.com/b70386/vira.git
-cd rute-realistis
+cd vira
 
 # Install dependencies
 npm install
@@ -289,7 +289,7 @@ VITE_OPENROUTESERVICE_API_KEY=your_key_here
 ## 📁 Struktur Project
 
 ```
-rute-realistis/
+vira/
 ├── public/              # Static assets
 ├── src/
 │   ├── components/      # React components
